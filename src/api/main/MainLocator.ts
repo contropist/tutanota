@@ -3,15 +3,15 @@ import {bootstrapWorker} from "./WorkerClient"
 import {EventController} from "./EventController"
 import {EntropyCollector} from "./EntropyCollector"
 import {SearchModel} from "../../search/model/SearchModel"
-import {MailModel} from "../../mail/model/MailModel"
-import {assertMainOrNode, getWebRoot, isBrowser, isDesktop, isElectronClient, isOfflineStorageAvailable} from "../common/Env"
+import {MailboxDetail, MailModel} from "../../mail/model/MailModel"
+import {assertMainOrNode, getWebRoot, isApp, isBrowser, isDesktop, isElectronClient, isOfflineStorageAvailable} from "../common/Env"
 import {notifications} from "../../gui/Notifications"
-import {logins} from "./LoginController"
+import {LoginController, logins} from "./LoginController"
 import type {ContactModel} from "../../contacts/model/ContactModel"
 import {ContactModelImpl} from "../../contacts/model/ContactModel"
 import {EntityClient} from "../common/EntityClient"
 import type {CalendarModel} from "../../calendar/model/CalendarModel"
-import {CalendarModelImpl} from "../../calendar/model/CalendarModel"
+import {CalendarInfo, CalendarModelImpl} from "../../calendar/model/CalendarModel"
 import type {DeferredObject} from "@tutao/tutanota-utils"
 import {defer, lazyMemoized} from "@tutao/tutanota-utils"
 import {ProgressTracker} from "./ProgressTracker"
@@ -70,6 +70,15 @@ import {InterWindowEventFacade} from "../../native/common/generatedipc/InterWind
 import {InterWindowEventFacadeSendDispatcher} from "../../native/common/generatedipc/InterWindowEventFacadeSendDispatcher.js"
 import {SqlCipherFacade} from "../../native/common/generatedipc/SqlCipherFacade.js"
 import {NewsModel} from "../../misc/news/NewsModel.js"
+import {SendMailModel} from "../../mail/editor/SendMailModel.js"
+import {NoZoneDateProvider} from "../common/utils/NoZoneDateProvider.js"
+import {CalendarEventViewModel} from "../../calendar/date/CalendarEventViewModel.js"
+import {CalendarEvent, Mail} from "../entities/tutanota/TypeRefs.js"
+import {calendarUpdateDistributor} from "../../calendar/date/CalendarUpdateDistributor.js"
+import {getTimeZone} from "../../calendar/date/CalendarUtils.js"
+import {RecipientsSearchModel} from "../../misc/RecipientsSearchModel.js"
+import {MailViewerViewModel} from "../../mail/view/MailViewerViewModel.js"
+import {CreateMailViewerOptions} from "../../mail/view/MailViewer.js"
 
 assertMainOrNode()
 
@@ -120,12 +129,28 @@ export interface IMainLocator {
 	readonly loginListener: LoginListener
 	readonly sqlCipherFacade: SqlCipherFacade
 	readonly cacheStorage: ExposedCacheStorage
-	readonly recipientsModel: RecipientsModel
 	readonly searchTextFacade: SearchTextInAppFacade
 	readonly desktopSettingsFacade: SettingsFacade
 	readonly desktopSystemFacade: DesktopSystemFacade
 	readonly interWindowEventSender: InterWindowEventFacade
 	readonly random: WorkerRandomizer;
+
+	recipientsModel(): Promise<RecipientsModel>
+
+	sendMailModel(mailboxDetails: MailboxDetail): Promise<SendMailModel>
+
+	calenderEventViewModel(
+		date: Date,
+		calendars: ReadonlyMap<Id, CalendarInfo>,
+		mailboxDetail: MailboxDetail,
+		existingEvent: CalendarEvent | null,
+		previousMail: Mail | null,
+		resolveRecipientsLazily: boolean,
+	): Promise<CalendarEventViewModel>
+
+	recipientsSearchModel(): Promise<RecipientsSearchModel>
+	mailViewerViewModel({mail, showFolder, delayBodyRenderingUntil}: CreateMailViewerOptions): Promise<MailViewerViewModel>
+
 	readonly init: () => Promise<void>
 	readonly initialized: Promise<void>
 }
@@ -167,7 +192,6 @@ class MainLocator implements IMainLocator {
 	newsModel!: NewsModel
 	serviceExecutor!: IServiceExecutor
 	cryptoFacade!: CryptoFacade
-	recipientsModel!: RecipientsModel
 	searchTextFacade!: SearchTextInAppFacade
 	desktopSettingsFacade!: SettingsFacade
 	desktopSystemFacade!: DesktopSystemFacade
@@ -179,6 +203,106 @@ class MainLocator implements IMainLocator {
 
 	private nativeInterfaces: NativeInterfaces | null = null
 	private exposedNativeInterfaces: ExposedNativeInterface | null = null
+
+	async loginController(): Promise<LoginController> {
+		const {logins} = await import("./LoginController.js")
+		return logins
+	}
+
+
+	async recipientsModel(): Promise<RecipientsModel> {
+		const {RecipientsModel} = await import("./RecipientsModel.js")
+		return new RecipientsModel(
+			this.contactModel,
+			await this.loginController(),
+			this.mailFacade,
+			this.entityClient,
+		)
+	}
+
+	async noZoneDateProvider(): Promise<NoZoneDateProvider> {
+		return new NoZoneDateProvider()
+	}
+
+	async sendMailModel(mailboxDetails: MailboxDetail): Promise<SendMailModel> {
+		const factory = await this.sendMailModelSyncFactory()
+		return factory(mailboxDetails)
+	}
+
+	/** This ugly bit exists because CalendarEventViewModel wants a sync factory. */
+	private async sendMailModelSyncFactory(): Promise<(mailboxDetails: MailboxDetail) => SendMailModel> {
+		const {SendMailModel} = await import("../../mail/editor/SendMailModel")
+		const logins = await this.loginController()
+		const recipientsModel = await this.recipientsModel()
+		const dateProvider = await this.noZoneDateProvider()
+		return (mailboxDetails) => new SendMailModel(
+			this.mailFacade,
+			this.entityClient,
+			logins,
+			this.mailModel,
+			this.contactModel,
+			this.eventController,
+			mailboxDetails,
+			recipientsModel,
+			dateProvider,
+		)
+	}
+
+	async calenderEventViewModel(
+		date: Date,
+		calendars: ReadonlyMap<Id, CalendarInfo>,
+		mailboxDetail: MailboxDetail,
+		existingEvent: CalendarEvent | null,
+		previousMail: Mail | null,
+		resolveRecipientsLazily: boolean,
+	): Promise<CalendarEventViewModel> {
+		const {CalendarEventViewModel} = await import("../../calendar/date/CalendarEventViewModel.js")
+		const {calendarUpdateDistributor} = await import("../../calendar/date/CalendarUpdateDistributor.js")
+		const sendMailModelFactory = await this.sendMailModelSyncFactory()
+		const {getTimeZone} = await import("../../calendar/date/CalendarUtils.js")
+
+		return new CalendarEventViewModel(
+			(await this.loginController()).getUserController(),
+			calendarUpdateDistributor,
+			this.calendarModel,
+			this.entityClient,
+			mailboxDetail,
+			sendMailModelFactory,
+			date,
+			getTimeZone(),
+			calendars,
+			existingEvent,
+			previousMail,
+			resolveRecipientsLazily,
+		)
+	}
+
+	async recipientsSearchModel(): Promise<RecipientsSearchModel> {
+		return new RecipientsSearchModel(
+			await this.recipientsModel(),
+			this.contactModel,
+			isApp() ? this.systemFacade : null,
+		)
+	}
+
+	async mailViewerViewModel({mail, showFolder, delayBodyRenderingUntil}: CreateMailViewerOptions): Promise<MailViewerViewModel> {
+		const {MailViewerViewModel} = await import("../../mail/view/MailViewerViewModel.js")
+		return new MailViewerViewModel(
+			mail,
+			showFolder,
+			delayBodyRenderingUntil ?? Promise.resolve(),
+			this.entityClient,
+			this.mailModel,
+			this.contactModel,
+			this.configFacade,
+			isDesktop() ? locator.desktopSystemFacade : null,
+			this.fileFacade,
+			this.fileController,
+			await this.loginController(),
+			this.serviceExecutor,
+			(mailboxDetails) => this.sendMailModel(mailboxDetails),
+		)
+	}
 
 	get native(): NativeInterfaceMain {
 		return this.getNativeInterface("native")
@@ -400,7 +524,6 @@ class MainLocator implements IMainLocator {
 		this.contactModel = new ContactModelImpl(this.searchFacade, this.entityClient, logins)
 		this.minimizedMailModel = new MinimizedMailEditorViewModel()
 		this.usageTestController = new UsageTestController(this.usageTestModel)
-		this.recipientsModel = new RecipientsModel(this.contactModel, logins, this.mailFacade, this.entityClient)
 	}
 }
 

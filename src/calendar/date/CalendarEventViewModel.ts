@@ -1279,29 +1279,3 @@ function createCalendarAlarm(identifier: string, trigger: string): AlarmInfo {
 	calendarAlarmInfo.trigger = trigger
 	return calendarAlarmInfo
 }
-
-export function createCalendarEventViewModel(
-	date: Date,
-	calendars: ReadonlyMap<Id, CalendarInfo>,
-	mailboxDetail: MailboxDetail,
-	existingEvent: CalendarEvent | null,
-	previousMail: Mail | null,
-	resolveRecipientsLazily: boolean,
-): Promise<CalendarEventViewModel> {
-	return import("../../mail/editor/SendMailModel").then(model => {
-		return new CalendarEventViewModel(
-			logins.getUserController(),
-			calendarUpdateDistributor,
-			locator.calendarModel,
-			locator.entityClient,
-			mailboxDetail,
-			mailboxDetail => model.defaultSendMailModel(mailboxDetail),
-			date,
-			getTimeZone(),
-			calendars,
-			existingEvent,
-			previousMail,
-			resolveRecipientsLazily,
-		)
-	})
-}

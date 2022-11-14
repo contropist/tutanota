@@ -2,8 +2,7 @@ import m, {Children, Component, Vnode} from "mithril"
 import stream from "mithril/stream"
 import Stream from "mithril/stream"
 import {Editor} from "../../gui/editor/Editor"
-import type {Attachment, InitAsResponseArgs} from "./SendMailModel"
-import {defaultSendMailModel, SendMailModel} from "./SendMailModel"
+import type {Attachment, InitAsResponseArgs, SendMailModel} from "./SendMailModel"
 import {Dialog} from "../../gui/base/Dialog"
 import {InfoLink, lang} from "../../misc/LanguageViewModel"
 import type {MailboxDetail} from "../model/MailModel"
@@ -59,7 +58,6 @@ import {MailRecipientsTextField} from "../../gui/MailRecipientsTextField.js"
 import {getContactDisplayName} from "../../contacts/model/ContactUtils"
 import {ResolvableRecipient} from "../../api/main/RecipientsModel"
 import {isOfflineError} from "../../api/common/utils/ErrorCheckUtils.js"
-import {getRecipientsSearchModel, RecipientsSearchModel} from "../../misc/RecipientsSearchModel.js"
 import {animateToolbar, RichTextToolbar} from "../../gui/base/RichTextToolbar.js"
 import {readLocalFiles} from "../../file/FileController"
 import {IconButton, IconButtonAttrs} from "../../gui/base/IconButton.js"
@@ -68,6 +66,7 @@ import {BootIcons} from "../../gui/base/icons/BootIcons.js"
 import {ButtonSize} from "../../gui/base/ButtonSize.js"
 import {DialogInjectionRightAttrs} from "../../gui/base/DialogInjectionRight.js"
 import {KnowledgebaseDialogContentAttrs} from "../../knowledgebase/view/KnowledgeBaseDialogContent.js"
+import {RecipientsSearchModel} from "../../misc/RecipientsSearchModel.js"
 
 export type MailEditorAttrs = {
 	model: SendMailModel
@@ -866,7 +865,7 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 		() => dialog,
 		templatePopupModel,
 		createKnowledgebaseButtonAttrs,
-		await getRecipientsSearchModel()
+		await locator.recipientsSearchModel()
 	)
 	const shortcuts: Shortcut[] = [
 		{
@@ -936,7 +935,7 @@ export function newMailEditorAsResponse(
 	mailboxDetails?: MailboxDetail,
 ): Promise<Dialog> {
 	return _mailboxPromise(mailboxDetails)
-		.then(defaultSendMailModel)
+		.then((mailboxDetails) => locator.sendMailModel(mailboxDetails))
 		.then(model => model.initAsResponse(args, inlineImages))
 		.then(model => createMailEditorDialog(model, blockExternalContent))
 }
@@ -950,7 +949,7 @@ export function newMailEditorFromDraft(
 	mailboxDetails?: MailboxDetail,
 ): Promise<Dialog> {
 	return _mailboxPromise(mailboxDetails)
-		.then(defaultSendMailModel)
+		.then((mailboxDetails) => locator.sendMailModel(mailboxDetails))
 		.then(model => model.initWithDraft(draft, attachments, bodyText, inlineImages))
 		.then(model => createMailEditorDialog(model, blockExternalContent))
 }
@@ -1019,9 +1018,9 @@ export function newMailEditorFromTemplate(
 	senderMailAddress?: string,
 	initialChangedState?: boolean
 ): Promise<Dialog> {
-	return defaultSendMailModel(mailboxDetails)
-		.initWithTemplate(recipients, subject, bodyText, attachments, confidential, senderMailAddress, initialChangedState)
-		.then(model => createMailEditorDialog(model))
+	return locator.sendMailModel(mailboxDetails)
+				  .then((model) => model.initWithTemplate(recipients, subject, bodyText, attachments, confidential, senderMailAddress, initialChangedState))
+				  .then(model => createMailEditorDialog(model))
 }
 
 export function getSupportMailSignature(): Promise<string> {
@@ -1111,10 +1110,10 @@ export function writeGiftCardMail(link: string, svg: SVGElement, mailboxDetails?
 			.split("\n")
 			.join("<br />")
 		const subject = lang.get("defaultShareGiftCardSubject_msg")
-		defaultSendMailModel(mailbox)
-			.initWithTemplate({}, subject, appendEmailSignature(bodyText, logins.getUserController().props), [], false)
-			.then(model => createMailEditorDialog(model, false))
-			.then(dialog => dialog.show())
+		locator.sendMailModel(mailbox)
+			   .then((model) => model.initWithTemplate({}, subject, appendEmailSignature(bodyText, logins.getUserController().props), [], false))
+			   .then(model => createMailEditorDialog(model, false))
+			   .then(dialog => dialog.show())
 	})
 }
 

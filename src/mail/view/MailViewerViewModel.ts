@@ -70,7 +70,7 @@ import {LoadingStateTracker} from "../../offline/LoadingState"
 import {IServiceExecutor} from "../../api/common/ServiceRequest"
 import {ListUnsubscribeService} from "../../api/entities/tutanota/Services"
 import {ProgrammingError} from "../../api/common/error/ProgrammingError"
-import {InitAsResponseArgs} from "../editor/SendMailModel"
+import {InitAsResponseArgs, SendMailModel} from "../editor/SendMailModel"
 import {isOfflineError} from "../../api/common/utils/ErrorCheckUtils.js"
 import {DesktopSystemFacade} from "../../native/common/generatedipc/DesktopSystemFacade.js"
 
@@ -138,7 +138,8 @@ export class MailViewerViewModel {
 		private readonly fileFacade: FileFacade,
 		private readonly fileController: FileController,
 		readonly logins: LoginController,
-		readonly service: IServiceExecutor
+		readonly service: IServiceExecutor,
+		private sendMailModelFactory: (mailboxDetails: MailboxDetail) => Promise<SendMailModel>
 	) {
 		this.delayBodyRenderingUntil.then(() => {
 				this.renderIsDelayed = false
@@ -898,10 +899,11 @@ export class MailViewerViewModel {
 		}
 
 		const args = await this.createResponseMailArgsForForwarding([recipient], newReplyTos, false)
-		const [mailboxDetails, {defaultSendMailModel}] = await Promise.all([this.getMailboxDetails(), import("../editor/SendMailModel")])
+		const mailboxDetails = await this.getMailboxDetails()
 		// Make sure inline images are loaded
 		await this.loadAll({notify: false})
-		const model = await defaultSendMailModel(mailboxDetails).initAsResponse(args, this.getLoadedInlineImages())
+		const model = await this.sendMailModelFactory(mailboxDetails)
+		await model.initAsResponse(args, this.getLoadedInlineImages())
 		await model.send(MailMethod.NONE)
 		const folders = await this.mailModel.getMailboxFolders(this.mail)
 		return moveMails({mailModel: this.mailModel, mails: [this.mail], targetMailFolder: getArchiveFolder(folders)})

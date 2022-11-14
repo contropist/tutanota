@@ -3,7 +3,7 @@ import {SearchListView, SearchResultListEntry} from "./SearchListView"
 import type {Contact, Mail} from "../../api/entities/tutanota/TypeRefs.js"
 import {ContactTypeRef, MailTypeRef} from "../../api/entities/tutanota/TypeRefs.js"
 import {LockedError, NotFoundError} from "../../api/common/error/RestError"
-import {createMailViewerViewModel, MailViewer} from "../../mail/view/MailViewer"
+import {MailViewer} from "../../mail/view/MailViewer"
 import {ContactViewer} from "../../contacts/view/ContactViewer"
 import ColumnEmptyMessageBox from "../../gui/base/ColumnEmptyMessageBox"
 import {assertMainOrNode} from "../../api/common/Env"
@@ -15,7 +15,6 @@ import {locator} from "../../api/main/MainLocator"
 import {isSameId} from "../../api/common/utils/EntityUtils"
 import {MailViewerViewModel} from "../../mail/view/MailViewerViewModel"
 import {IconButtonAttrs} from "../../gui/base/IconButton.js"
-import {showHeaderDialog} from "../../mail/view/MailViewerUtils.js"
 
 assertMainOrNode()
 
@@ -61,7 +60,7 @@ export class SearchResultDetailsViewer {
 		return this._viewerEntityId != null && isSameId(id, this._viewerEntityId)
 	}
 
-	showEntity(entity: Record<string, any>, entitySelected: boolean): void {
+	async showEntity(entity: Record<string, any>, entitySelected: boolean) {
 		if (isSameTypeRef(MailTypeRef, entity._type)) {
 			const mail = entity as Mail
 			const viewModelParams = {
@@ -73,7 +72,7 @@ export class SearchResultDetailsViewer {
 			} else {
 				this._viewer = {
 					mode: "mail",
-					viewModel: createMailViewerViewModel(viewModelParams)
+					viewModel: await locator.mailViewerViewModel(viewModelParams)
 				}
 			}
 			this._viewerEntityId = mail._id

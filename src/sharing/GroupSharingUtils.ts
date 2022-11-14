@@ -1,6 +1,5 @@
 import {getDefaultSender, getEnabledMailAddresses, getSenderNameForUser} from "../mail/model/MailUtils"
-import type {GroupInfo} from "../api/entities/sys/TypeRefs.js"
-import type {ReceivedGroupInvitation} from "../api/entities/sys/TypeRefs.js"
+import type {GroupInfo, ReceivedGroupInvitation} from "../api/entities/sys/TypeRefs.js"
 import {locator} from "../api/main/MainLocator"
 import {logins} from "../api/main/LoginController"
 import {MailMethod} from "../api/common/TutanotaConstants"
@@ -81,17 +80,15 @@ function _sendNotificationEmail(recipients: Recipients, subject: string, body: s
 			allowRelativeLinks: false,
 			usePlaceholderForInlineImages: false,
 		}).html
-		locator.mailModel.getUserMailboxDetails().then(mailboxDetails => {
+		locator.mailModel.getUserMailboxDetails().then(async mailboxDetails => {
 			const sender = getEnabledMailAddresses(mailboxDetails).includes(senderMailAddress) ? senderMailAddress : getDefaultSender(logins, mailboxDetails)
 
 			const confirm = () => Promise.resolve(true)
 
 			const wait = showProgressDialog
-			import("../mail/editor/SendMailModel").then(({defaultSendMailModel}) => {
-				return defaultSendMailModel(mailboxDetails)
-					.initWithTemplate(recipients, subject, sanitizedBody, [], true, sender)
-					.then(model => model.send(MailMethod.NONE, confirm, wait, "tooManyMailsAuto_msg"))
-			})
+			const model = await locator.sendMailModel(mailboxDetails)
+			await model.initWithTemplate(recipients, subject, sanitizedBody, [], true, sender)
+			await model.send(MailMethod.NONE, confirm, wait, "tooManyMailsAuto_msg")
 		})
 	})
 }

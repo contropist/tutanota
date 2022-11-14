@@ -6,7 +6,6 @@ import {ButtonType} from "../../gui/base/Button.js"
 import {isMailAddress} from "../../misc/FormatValidator"
 import {UserError} from "../../api/main/UserError"
 import {showUserError} from "../../misc/ErrorHandlerImpl"
-import {defaultSendMailModel} from "../editor/SendMailModel"
 import type {MailboxDetail} from "../model/MailModel"
 import {Keys, MailMethod, TabIndex} from "../../api/common/TutanotaConstants"
 import {getDefaultSender} from "../model/MailUtils"
@@ -18,6 +17,7 @@ import {replaceInlineImagesWithCids} from "../view/MailGuiUtils"
 import {TextField} from "../../gui/base/TextField.js"
 import {DialogHeaderBarAttrs} from "../../gui/base/DialogHeaderBar";
 import {RichTextToolbar} from "../../gui/base/RichTextToolbar.js"
+import {locator} from "../../api/main/MainLocator.js"
 
 type PressContact = {
 	email: string
@@ -109,7 +109,8 @@ export function openPressReleaseEditor(mailboxDetails: MailboxDetail): void {
 			const bodyWithGreeting = `<p>${recipient.greeting},</p>${body}`
 
 			try {
-				const model = await defaultSendMailModel(mailboxDetails).initWithTemplate(
+				const sendMailModel = await locator.sendMailModel(mailboxDetails)
+				const model = await sendMailModel.initWithTemplate(
 					{
 						to: [
 							{
