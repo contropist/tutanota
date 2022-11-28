@@ -12,7 +12,7 @@ import {CacheStorage, expandId, ExposedCacheStorage, LastUpdateTime} from "../re
 import * as cborg from "cborg"
 import {EncodeOptions, Token, Type} from "cborg"
 import {assert, assertNotNull, DAY_IN_MILLIS, getTypeId, groupByAndMap, groupByAndMapUniquely, mapNullable, TypeRef} from "@tutao/tutanota-utils"
-import {isDesktop, isOfflineStorageAvailable, isTest} from "../../common/Env.js"
+import {isAndroidApp, isDesktop, isOfflineStorageAvailable, isTest} from "../../common/Env.js"
 import {modelInfos} from "../../common/EntityFunctions.js"
 import {AccountType, MailFolderType, OFFLINE_STORAGE_DEFAULT_TIME_RANGE_DAYS} from "../../common/TutanotaConstants.js"
 import {DateProvider} from "../../common/DateProvider.js"
@@ -89,6 +89,7 @@ export interface OfflineStorageInitArgs {
 export class OfflineStorage implements CacheStorage, ExposedCacheStorage {
 	private customCacheHandler: CustomCacheHandlerMap | null = null
 	private userId: Id | null = null
+	private timeRangeDays: number | null = null
 
 	constructor(
 		private readonly sqlCipherFacade: SqlCipherFacade,
@@ -104,6 +105,7 @@ export class OfflineStorage implements CacheStorage, ExposedCacheStorage {
 	 */
 	async init({userId, databaseKey, timeRangeDays, forceNewDatabase}: OfflineStorageInitArgs): Promise<boolean> {
 		this.userId = userId
+		this.timeRangeDays = timeRangeDays
 		if (forceNewDatabase) {
 			if (isDesktop()) {
 				await this.interWindowEventSender.localUserDataInvalidated(userId)
@@ -116,7 +118,19 @@ export class OfflineStorage implements CacheStorage, ExposedCacheStorage {
 		await this.migrator.migrate(this, this.sqlCipherFacade)
 		// if nothing is written here, it means it's a new database
 		const isNewOfflineDb = await this.getLastUpdateTime() == null
-		await this.clearExcludedData(timeRangeDays, userId)
+
+		// We are using the auto_vacuum=incremental option to allow for a faster vacuum execution
+		await this.sqlCipherFacade.run("PRAGMA auto_vacuum = incremental", [])
+
+		/**
+		 * We only clear the excluded data (i.e. trash and spam lists, old data) on OfflineStorage initialization on the
+		 * Desktop and iOS client, as for on Android this might drastically increase the login time.
+		 * On Android we clear the excluded data once the app is closed (see WebMobileFacade.ts)
+		 */
+		if (!isAndroidApp()) {
+			await this.clearExcludedData(timeRangeDays, userId)
+		}
+
 		return isNewOfflineDb
 	}
 
@@ -334,8 +348,9 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 	/**
 	 * Clear out unneeded data from the offline database (i.e. trash and spam lists, old data)
 	 * @param timeRangeDays: the maxiumum age of days that mails should be to be kept in the database. if null, will use a default value
+	 * @param userId id of the current user. default, last stored userId
 	 */
-	private async clearExcludedData(timeRangeDays: number | null, userId: Id): Promise<void> {
+	async clearExcludedData(timeRangeDays: number | null = this.timeRangeDays, userId: Id = this.getUserId()): Promise<void> {
 		const user = await this.get(UserTypeRef, null, userId)
 
 		// Free users always have default time range regardless of what is stored
@@ -354,6 +369,7 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 		}
 
 		await this.sqlCipherFacade.run("VACUUM", [])
+		console.log("finished vacuum offline database")
 	}
 
 	private async createTables() {
