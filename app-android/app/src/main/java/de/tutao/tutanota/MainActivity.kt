@@ -21,6 +21,7 @@ import android.webkit.WebView.HitTestResult
 import android.widget.Toast
 import androidx.annotation.MainThread
 import androidx.annotation.RequiresPermission
+import androidx.browser.customtabs.*
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat.setSystemGestureExclusionRects
 import androidx.core.view.doOnLayout
@@ -266,6 +267,10 @@ class MainActivity : FragmentActivity() {
 			handleIntent(intent)
 		}
 		firstLoaded = true
+
+		lifecycleScope.launchWhenResumed {
+			showWebauthnTab()
+		}
 	}
 
 	private fun getMimeTypeForUrl(url: String): String {
@@ -370,6 +375,32 @@ class MainActivity : FragmentActivity() {
 	override fun onSaveInstanceState(outState: Bundle) {
 		super.onSaveInstanceState(outState)
 		webView.saveState(outState)
+	}
+
+	private fun showWebauthnTab() {
+		val url = "http://ivk:9000/client/build/webauthntest.html"
+		val packageName = CustomTabsClient.getPackageName(this, listOf())
+		CustomTabsClient.bindCustomTabsService(this, packageName, object : CustomTabsServiceConnection() {
+			override fun onCustomTabsServiceConnected(name: ComponentName, client: CustomTabsClient) {
+				val session = client.newSession(object : CustomTabsCallback() {
+					override fun onNavigationEvent(navigationEvent: Int, extras: Bundle?) {
+						Log.d(TAG, "NAVIGATION EVENT $navigationEvent ${extras?.keySet()?.joinToString()}")
+					}
+				}) ?: error("Could not create a custom tabs session?")
+				val customIntent = CustomTabsIntent.Builder()
+						.setSession(session)
+						.build()
+				val sessionToken = CustomTabsSessionToken.getSessionTokenFromIntent(customIntent.intent)
+				Log.d(TAG, "SESSION TOKEN $sessionToken")
+				customIntent
+						.launchUrl(this@MainActivity, Uri.parse(url))
+			}
+
+			override fun onServiceDisconnected(name: ComponentName?) {
+				Log.d(TAG, "Service disconnected?")
+			}
+		})
+
 	}
 
 	suspend fun askBatteryOptimizationsIfNeeded() {
