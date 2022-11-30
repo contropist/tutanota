@@ -108,7 +108,7 @@ export class WebMobileFacade implements MobileFacade {
 			}, 30 * SECOND_MS)
 
 			// clear excluded data in the cacheStorage (i.e. trash and spam lists, old data)
-			await locator.cacheStorage.clearExcludedData()
+			//await locator.cacheStorage.clearExcludedData()
 		}
 	}
 
