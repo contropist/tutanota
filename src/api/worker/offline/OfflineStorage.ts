@@ -393,6 +393,21 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 	 */
 	private async deleteMailList(listId: Id, cutoffId: Id): Promise<void> {
 
+		// FIXME
+
+		// 1. cache reads the range
+		// 2. we update the range with smaller value
+		// 3. we delete emails
+		// 4. cache write bigger range
+		// 5. we never see some emails
+
+
+		// 1. we lock
+		// 2. we update range
+		//
+
+		// lock here
+
 		// This must be done before deleting mails to know what the new range has to be
 		await this.updateRangeForList(MailTypeRef, listId, cutoffId)
 
@@ -424,6 +439,8 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 		}
 
 		await this.deleteIn(MailTypeRef, listId, mailsToDelete.map(elementIdPart))
+
+		// unlock here
 	}
 
 	private async deleteIn(typeRef: TypeRef<unknown>, listId: Id | null, elementIds: Id[]): Promise<void> {

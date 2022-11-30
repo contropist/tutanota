@@ -322,26 +322,37 @@ export class DefaultEntityRestCache implements EntityRestCache {
 			return await this.storage.getCustomCacheHandlerMap(this.entityRestClient).get(typeRef)!.loadRange(this.storage, listId, start, count, reverse)
 		}
 
+
 		const typeModel = await resolveTypeReference(typeRef)
 		if (!isCachedType(typeModel, typeRef)) {
 			return this.entityRestClient.loadRange(typeRef, listId, start, count, reverse)
 		}
 
-		const range = await this.storage.getRangeForList(typeRef, listId)
+		// FIXME Lock stuff here
 
-		if (
-			range == null
-		) {
-			await this.populateNewListWithRange(typeRef, listId, start, count, reverse)
-		} else if (isStartIdWithinRange(range, start)) {
-			await this.extendFromWithinRange(typeRef, listId, start, count, reverse)
-		} else if (isRangeRequestAwayFromExistingRange(range, reverse, start)) {
-			await this.extendAwayFromRange(typeRef, listId, start, count, reverse)
-		} else {
-			await this.extendTowardsRange(typeRef, listId, start, count, reverse)
+		await this.cacheStorage.lockList(listId)
+
+		try {
+			const range = await this.storage.getRangeForList(typeRef, listId)
+
+			if (
+				range == null
+			) {
+				await this.populateNewListWithRange(typeRef, listId, start, count, reverse)
+			} else if (isStartIdWithinRange(range, start)) {
+				await this.extendFromWithinRange(typeRef, listId, start, count, reverse)
+			} else if (isRangeRequestAwayFromExistingRange(range, reverse, start)) {
+				await this.extendAwayFromRange(typeRef, listId, start, count, reverse)
+			} else {
+				await this.extendTowardsRange(typeRef, listId, start, count, reverse)
+			}
+
+			return this.storage.provideFromRange(typeRef, listId, start, count, reverse)
+		} finally {
+			// FIXME unclock stuff here
+
+			this.cacheStorage.unlockList(listId)
 		}
-
-		return this.storage.provideFromRange(typeRef, listId, start, count, reverse)
 	}
 
 	/**

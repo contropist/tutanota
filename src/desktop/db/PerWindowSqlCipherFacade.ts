@@ -1,7 +1,7 @@
 import {SqlCipherFacade} from "../../native/common/generatedipc/SqlCipherFacade.js"
 import {TaggedSqlValue} from "../../api/worker/offline/SqlValue.js"
 import {ProgrammingError} from "../../api/common/error/ProgrammingError.js"
-import {delay} from "@tutao/tutanota-utils"
+import {defer, delay} from "@tutao/tutanota-utils"
 import {log} from "../DesktopLog.js"
 import {OfflineDbClosedError} from "../../api/common/error/OfflineDbClosedError.js"
 
@@ -74,6 +74,23 @@ export class OfflineDbManager {
 	constructor(
 		private readonly offlineDbFactory: OfflineDbFactory,
 	) {
+	}
+
+	// FIXME
+	// This is the native part, we lock on the native side
+	// lock per cache (with listId)
+	// lock with promise
+
+	async lockTheTHing() {
+		if (this.locks.get(listId)) {
+			await this.locks.get(listId).promise
+		} else {
+			this.locks.set(listId, defer())
+		}
+	}
+
+	async unlock() {
+		this.locks.get(listId).resolve()
 	}
 
 	async getOrCreateDb(userId: Id, dbKey: Uint8Array): Promise<SqlCipherFacade> {

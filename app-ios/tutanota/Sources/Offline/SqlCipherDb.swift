@@ -34,6 +34,9 @@ class SqlCipherDb {
       throw TUTErrorFactory.createError(withDomain: TUT_CRYPTO_ERROR, message: "sqlcipher: \(errors.count) pages failed integrity check")
     }
 
+    // FIXME incremental -> do we need to do vacuum first
+    // FIXME run database close on app terminated
+
     // We are using the auto_vacuum=incremental option to allow for a faster vacuum execution
     try! self.prepare(query: "PRAGMA auto_vacuum = incremental").run()
   }
