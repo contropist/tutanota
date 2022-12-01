@@ -1,6 +1,7 @@
 package de.tutao.tutanota
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.*
@@ -21,7 +22,8 @@ import android.webkit.WebView.HitTestResult
 import android.widget.Toast
 import androidx.annotation.MainThread
 import androidx.annotation.RequiresPermission
-import androidx.browser.customtabs.*
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.browser.customtabs.CustomTabsSessionToken
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat.setSystemGestureExclusionRects
 import androidx.core.view.doOnLayout
@@ -351,10 +353,19 @@ class MainActivity : FragmentActivity() {
 
 	override fun onNewIntent(intent: Intent) {
 		super.onNewIntent(intent)
+		Log.d(TAG, "onNewIntent")
 		handleIntent(intent)
 	}
 
+	private fun Intent.debugDescription(): String {
+		val extraString = this.extras?.let { extras ->
+			extras.keySet().joinToString(prefix = "{", postfix = "}") { "$it: ${extras[it]}" }
+		}
+		return "action: ${this.action}, scheme: ${this.scheme}, data: ${this.data}, extras: $extraString"
+	}
+
 	private fun handleIntent(intent: Intent) = lifecycleScope.launchWhenCreated {
+		Log.d(TAG, "handling intent ${intent.debugDescription()}")
 
 		// When we redirect to the app from outside, for example after doing payment verification,
 		// we don't want to do any kind of intent handling
@@ -380,13 +391,25 @@ class MainActivity : FragmentActivity() {
 	}
 
 	private fun showWebauthnTab() {
-		val url = "https://test.tutanota.com"
+		val url = Uri.parse("http://ivk:9000/client/build/webauthnmobile")
+			.buildUpon()
+			.appendQueryParameter(
+				"cbUrl",
+				"intent://webauthn/#Intent;scheme=tutanota;package=de.tutao.tutanota.debug;S.browser_fallback_url=http%3A%2F%2Fgoogle.com;S.result={result};end"
+			)
+			.build()
+//		val url = Uri.parse("https://test.tutanota.com")
 		val customIntent = CustomTabsIntent.Builder()
 			.build()
 		val sessionToken = CustomTabsSessionToken.getSessionTokenFromIntent(customIntent.intent)
 		Log.d(TAG, "SESSION TOKEN $sessionToken")
-		customIntent
-			.launchUrl(this@MainActivity, Uri.parse(url))
+		val intent = customIntent.intent.apply {
+			data = url
+			// close custom tabs activity as soon as user navigates away from it, otherwise it will linger as a separate
+			// task
+			addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
+		}
+		startActivity(intent)
 
 		//		val packageName = CustomTabsClient.getPackageName(this, listOf())
 //		CustomTabsClient.bindCustomTabsService(this, packageName, object : CustomTabsServiceConnection() {
