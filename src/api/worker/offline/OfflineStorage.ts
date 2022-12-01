@@ -393,20 +393,8 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 	 */
 	private async deleteMailList(listId: Id, cutoffId: Id): Promise<void> {
 
-		// FIXME
-
-		// 1. cache reads the range
-		// 2. we update the range with smaller value
-		// 3. we delete emails
-		// 4. cache write bigger range
-		// 5. we never see some emails
-
-
-		// 1. we lock
-		// 2. we update range
-		//
-
-		// lock here
+		// We lock access to the "ranges" db here
+		await this.sqlCipherFacade.lockRangesDbAccess(listId)
 
 		// This must be done before deleting mails to know what the new range has to be
 		await this.updateRangeForList(MailTypeRef, listId, cutoffId)
@@ -440,7 +428,8 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 
 		await this.deleteIn(MailTypeRef, listId, mailsToDelete.map(elementIdPart))
 
-		// unlock here
+		// We unlock access to the "ranges" db here
+		await this.sqlCipherFacade.unlockRangesDbAccess(listId)
 	}
 
 	private async deleteIn(typeRef: TypeRef<unknown>, listId: Id | null, elementIds: Id[]): Promise<void> {
@@ -449,6 +438,9 @@ AND NOT(${firstIdBigger("elementId", upper)})`
 			: sql`DELETE FROM list_entities WHERE type = ${getTypeId(typeRef)} AND listId = ${listId} AND elementId IN ${paramList(elementIds)}`
 		return this.sqlCipherFacade.run(query, params)
 	}
+
+	// FIXME
+	async lock
 
 	private async updateRangeForList<T extends ListElementEntity>(typeRef: TypeRef<T>, listId: Id, cutoffId: Id): Promise<void> {
 		const type = getTypeId(typeRef)

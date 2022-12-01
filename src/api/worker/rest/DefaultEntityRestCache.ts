@@ -322,15 +322,12 @@ export class DefaultEntityRestCache implements EntityRestCache {
 			return await this.storage.getCustomCacheHandlerMap(this.entityRestClient).get(typeRef)!.loadRange(this.storage, listId, start, count, reverse)
 		}
 
-
 		const typeModel = await resolveTypeReference(typeRef)
 		if (!isCachedType(typeModel, typeRef)) {
 			return this.entityRestClient.loadRange(typeRef, listId, start, count, reverse)
 		}
 
-		// FIXME Lock stuff here
-
-		await this.cacheStorage.lockList(listId)
+		await this.storage.
 
 		try {
 			const range = await this.storage.getRangeForList(typeRef, listId)
