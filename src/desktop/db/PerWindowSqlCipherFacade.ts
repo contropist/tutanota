@@ -48,10 +48,19 @@ export class PerWindowSqlCipherFacade implements SqlCipherFacade {
 		return this.db().run(query, params)
 	}
 
+	/**
+	 * We want to lock the access to the "ranges" db when updating / reading the
+	 * offline available mail list ranges for each mail list (referenced using the listId)
+	 * @param listId the mail list that we want to lock
+	 */
 	async lockRangesDbAccess(listId: Id): Promise<void> {
 		return this.manager.lockRangesDbAccess(listId)
 	}
 
+	/**
+	 * This is the counterpart to the function "lockRangesDbAccess(listId)"
+	 * @param listId the mail list that we want to unlock
+	 */
 	async unlockRangesDbAccess(listId: Id): Promise<void> {
 		return this.manager.unlockRangesDbAccess(listId)
 	}
@@ -78,6 +87,12 @@ export interface OfflineDbFactory {
 
 export class OfflineDbManager {
 	private readonly cache: Map<Id, CacheEntry> = new Map()
+
+	/**
+	 * We want to lock the access to the "ranges" db when updating / reading the
+	 * offline available mail list ranges for each mail list (referenced using the listId).
+	 * We store locks with their corresponding listId in this Map.
+	 */
 	private readonly listIdLocks: Map<Id, DeferredObject<void>> = new Map()
 
 	constructor(
@@ -126,7 +141,7 @@ export class OfflineDbManager {
 
 	/**
 	 * We want to lock the access to the "ranges" db when updating / reading the
-	 * offline available mail list ranges for each mail list (referenced using the listId)
+	 * offline available mail list ranges for each mail list (referenced using the listId).
 	 * @param listId the mail list that we want to lock
 	 */
 	async lockRangesDbAccess(listId: Id): Promise<void> {
@@ -138,10 +153,11 @@ export class OfflineDbManager {
 	}
 
 	/**
-	 * This is the counterpart to the function "lockRangesDbAccess(listId)"
+	 * This is the counterpart to the function "lockRangesDbAccess(listId)".
 	 * @param listId the mail list that we want to unlock
 	 */
 	async unlockRangesDbAccess(listId: Id): Promise<void> {
 		this.listIdLocks.get(listId)?.resolve()
+		this.listIdLocks.delete(listId)
 	}
 }

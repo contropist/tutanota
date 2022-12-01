@@ -55,7 +55,7 @@ class SqlCipherDb {
 
   func close() {
     // We are performing defragmentation (incremental_vacuum) the database before closing
-	  try! self.prepare("PRAGMA incremental_vacuum").run()
+	try! self.prepare("PRAGMA incremental_vacuum").run()
 
     if sqlite3_close(self.db) != SQLITE_OK {
       let errmsg = self.getLastErrorMessage()

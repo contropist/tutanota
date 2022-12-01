@@ -1,5 +1,10 @@
 import Foundation
 
+enum listIdLockState {
+  case waitingForListIdUnlock
+  case listIdUnlocked
+}
+
 class IosSqlCipherFacade: SqlCipherFacade {
   private var db: SqlCipherDb? = nil
   var openedDb: SqlCipherDb {
@@ -10,6 +15,8 @@ class IosSqlCipherFacade: SqlCipherFacade {
       return db
     }
   }
+
+  private var listIdLocks = Dictionary<String, CurrentValueSubject<Void, Never>>
 
   func run(_ query: String, _ params: [TaggedSqlValue]) async throws {
     let prepped = try! self.openedDb.prepare(query: query)
@@ -45,7 +52,7 @@ class IosSqlCipherFacade: SqlCipherFacade {
     if let db = self.db, db.userId == userId {
         db.close()
     }
-    
+
     do {
       try FileUtils.deleteFile(path: makeDbPath(userId))
     } catch {
@@ -59,5 +66,29 @@ class IosSqlCipherFacade: SqlCipherFacade {
         throw error
       }
     }
+  }
+
+  // FIXME
+
+  // continue here !
+
+  func lockRangesDbAccess(_ listId: String) async throws {
+	/// awaiting for the first and hopefully only void object in this publisher
+    /// could be simpler but .values is iOS > 15
+    if (listIdUnlocked)
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+	  // first will end the subscription after the first match so we don't need to cancel manually
+	  // (it is anyway hard to do as .sink() is called sync right away before we get subscription)
+	  let
+	  let _ = self.initialized
+		.first(where: { $0 == .initReceived })
+		.sink { v in
+		  continuation.resume()
+	  }
+	}
+  }
+
+  func unlockRangesDbAccess(_ listId: String) async throws {
+  	self.listIdLocks[listId].send(.listIdUnlocked)
   }
 }

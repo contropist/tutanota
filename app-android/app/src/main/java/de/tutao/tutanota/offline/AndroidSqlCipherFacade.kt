@@ -8,6 +8,10 @@ import de.tutao.tutanota.ipc.SqlCipherFacade
 import de.tutao.tutanota.ipc.wrap
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class AndroidSqlCipherFacade(private val context: Context) : SqlCipherFacade {
 	init {
@@ -20,6 +24,8 @@ class AndroidSqlCipherFacade(private val context: Context) : SqlCipherFacade {
 	private var db: SQLiteDatabase? = null
 	private val openedDb: SQLiteDatabase
 		get() = db ?: throw OfflineDbClosedError()
+
+	private val listIdLocks: MutableMap<String, Continuation<Unit>> = ConcurrentHashMap()
 
 	override suspend fun openDb(userId: String, dbKey: DataWrapper) {
 		// db is volatile so we see the latest value but it doesn't mean that we won't try to open/delete it in parallel
@@ -107,6 +113,28 @@ class AndroidSqlCipherFacade(private val context: Context) : SqlCipherFacade {
 				}
 			}
 		}
+	}
+
+	/**
+	 * We want to lock the access to the "ranges" db when updating / reading the
+	 * offline available mail list ranges for each mail list (referenced using the listId).
+	 * @param listId the mail list that we want to lock
+	 */
+	override suspend fun lockRangesDbAccess(listId: String): Unit = suspendCoroutine { continuation ->
+		listIdLocks[listId] = continuation
+	}
+
+	/**
+	 * This is the counterpart to the function "lockRangesDbAccess(listId)".
+	 * @param listId the mail list that we want to unlock
+	 */
+	override suspend fun unlockRangesDbAccess(listId: String) {
+		val continuation = listIdLocks.remove(listId)
+		if (continuation == null) {
+			Log.w(TAG, "No deferred for the listIdLock with listId $listId")
+			return
+		}
+		continuation.resume(Unit)
 	}
 
 	private fun List<TaggedSqlValue>.prepare() = map { it.unwrap() }.toTypedArray()
