@@ -121,7 +121,12 @@ class AndroidSqlCipherFacade(private val context: Context) : SqlCipherFacade {
 	 * @param listId the mail list that we want to lock
 	 */
 	override suspend fun lockRangesDbAccess(listId: String): Unit = suspendCoroutine { continuation ->
-		listIdLocks[listId] = continuation
+		if (listIdLocks.containsKey(listId)) {
+			listIdLocks[listId] = continuation
+		} else {
+			listIdLocks[listId] = continuation
+			continuation.resume(Unit)
+		}
 	}
 
 	/**

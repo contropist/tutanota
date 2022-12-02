@@ -16,7 +16,7 @@ class IosSqlCipherFacade: SqlCipherFacade {
     }
   }
 
-  private var listIdLocks = Dictionary<String, CurrentValueSubject<Void, Never>>
+  private var listIdLocks = Dictionary<String, CurrentValueSubject<Void, Never>()>()
 
   func run(_ query: String, _ params: [TaggedSqlValue]) async throws {
     let prepped = try! self.openedDb.prepare(query: query)
@@ -68,23 +68,18 @@ class IosSqlCipherFacade: SqlCipherFacade {
     }
   }
 
-  // FIXME
-
-  // continue here !
-
   func lockRangesDbAccess(_ listId: String) async throws {
-	/// awaiting for the first and hopefully only void object in this publisher
-    /// could be simpler but .values is iOS > 15
-    if (listIdUnlocked)
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-	  // first will end the subscription after the first match so we don't need to cancel manually
-	  // (it is anyway hard to do as .sink() is called sync right away before we get subscription)
-	  let
-	  let _ = self.initialized
-		.first(where: { $0 == .initReceived })
-		.sink { v in
-		  continuation.resume()
-	  }
+    if (self.listIdLocks[listId]) {
+		await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+		  let _ = self.listIdLocks[listId]
+			.first(where: { $0 == .listIdUnlocked })
+			.sink { v in
+			  self.listIdLocks.remove(listId)
+			  continuation.resume()
+		  }
+		}
+	} else {
+		self.listIdLocks[listId] = CurrentValueSubject<Void, Never>(.waitingForListIdUnlock)
 	}
   }
 
