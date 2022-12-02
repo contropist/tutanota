@@ -141,6 +141,7 @@ const ErrorNameToType = {
 	"de.tutao.tutanota.KeyPermanentlyInvalidatedError": KeyPermanentlyInvalidatedError,
 	"de.tutao.tutanota.CredentialAuthenticationError": CredentialAuthenticationError,
 	"de.tutao.tutanota.offline.OfflineDbClosedError": OfflineDbClosedError,
+	"de.tutao.tutanota.CancelledError": CancelledError,
 }
 
 export function isCustomizationEnabledForCustomer(customer: Customer, feature: FeatureType): boolean {

@@ -1,7 +1,6 @@
 package de.tutao.tutanota
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.*
@@ -22,8 +21,6 @@ import android.webkit.WebView.HitTestResult
 import android.widget.Toast
 import androidx.annotation.MainThread
 import androidx.annotation.RequiresPermission
-import androidx.browser.customtabs.CustomTabsIntent
-import androidx.browser.customtabs.CustomTabsSessionToken
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat.setSystemGestureExclusionRects
 import androidx.core.view.doOnLayout
@@ -36,6 +33,7 @@ import de.tutao.tutanota.data.AppDatabase
 import de.tutao.tutanota.ipc.*
 import de.tutao.tutanota.offline.AndroidSqlCipherFacade
 import de.tutao.tutanota.push.*
+import de.tutao.tutanota.webauthn.AndroidWebauthnFacade
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -73,6 +71,7 @@ class MainActivity : FragmentActivity() {
 	private val activityRequests: MutableMap<Int, Continuation<ActivityResult>> = ConcurrentHashMap()
 
 	private var firstLoaded = false
+	var webauthnResultHandler: ((String) -> Unit)? = null
 
 	@SuppressLint("SetJavaScriptEnabled", "StaticFieldLeak")
 	override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,6 +103,8 @@ class MainActivity : FragmentActivity() {
 		sqlCipherFacade = AndroidSqlCipherFacade(this)
 		commonSystemFacade = AndroidCommonSystemFacade(this, sqlCipherFacade, fileFacade.tempDir)
 
+		val webauthnFacade = AndroidWebauthnFacade(this, ipcJson)
+
 		val globalDispatcher = AndroidGlobalDispatcher(
 			ipcJson,
 			commonSystemFacade,
@@ -114,6 +115,7 @@ class MainActivity : FragmentActivity() {
 			nativePushFacade,
 			sqlCipherFacade,
 			themeFacade,
+			webauthnFacade,
 		)
 		remoteBridge = RemoteBridge(
 			ipcJson,
@@ -269,10 +271,6 @@ class MainActivity : FragmentActivity() {
 			handleIntent(intent)
 		}
 		firstLoaded = true
-
-		lifecycleScope.launchWhenResumed {
-			showWebauthnTab()
-		}
 	}
 
 	private fun getMimeTypeForUrl(url: String): String {
@@ -370,6 +368,11 @@ class MainActivity : FragmentActivity() {
 		// When we redirect to the app from outside, for example after doing payment verification,
 		// we don't want to do any kind of intent handling
 		val data = intent.data
+
+		if (data != null && data.scheme == "tutanota" && data.host == "webauthn") {
+			handleWebauthn(intent, data)
+		}
+
 		if (data != null && data.toString().startsWith("tutanota://")) {
 			return@launchWhenCreated
 		}
@@ -385,54 +388,23 @@ class MainActivity : FragmentActivity() {
 		}
 	}
 
+	private fun handleWebauthn(intent: Intent, data: Uri) {
+		if (webauthnResultHandler != null) {
+			val result = intent.getStringExtra("result")
+			if (result != null) {
+				webauthnResultHandler?.invoke(result)
+			} else {
+				Log.w(TAG, "Webauthn result is not defined! $data")
+				// FIXME probably reject here?
+			}
+		} else {
+			Log.w(TAG, "Webauthn handler is not set!")
+		}
+	}
+
 	override fun onSaveInstanceState(outState: Bundle) {
 		super.onSaveInstanceState(outState)
 		webView.saveState(outState)
-	}
-
-	private fun showWebauthnTab() {
-		val url = Uri.parse("http://ivk:9000/client/build/webauthnmobile")
-			.buildUpon()
-			.appendQueryParameter(
-				"cbUrl",
-				"intent://webauthn/#Intent;scheme=tutanota;package=de.tutao.tutanota.debug;S.browser_fallback_url=http%3A%2F%2Fgoogle.com;S.result={result};end"
-			)
-			.build()
-//		val url = Uri.parse("https://test.tutanota.com")
-		val customIntent = CustomTabsIntent.Builder()
-			.build()
-		val sessionToken = CustomTabsSessionToken.getSessionTokenFromIntent(customIntent.intent)
-		Log.d(TAG, "SESSION TOKEN $sessionToken")
-		val intent = customIntent.intent.apply {
-			data = url
-			// close custom tabs activity as soon as user navigates away from it, otherwise it will linger as a separate
-			// task
-			addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
-		}
-		startActivity(intent)
-
-		//		val packageName = CustomTabsClient.getPackageName(this, listOf())
-//		CustomTabsClient.bindCustomTabsService(this, packageName, object : CustomTabsServiceConnection() {
-//			override fun onCustomTabsServiceConnected(name: ComponentName, client: CustomTabsClient) {
-//				val session = client.newSession(object : CustomTabsCallback() {
-//					override fun onNavigationEvent(navigationEvent: Int, extras: Bundle?) {
-//						Log.d(TAG, "NAVIGATION EVENT $navigationEvent ${extras?.keySet()?.joinToString()}")
-//					}
-//				}) ?: error("Could not create a custom tabs session?")
-//				val customIntent = CustomTabsIntent.Builder()
-//						.setSession(session)
-//						.build()
-//				val sessionToken = CustomTabsSessionToken.getSessionTokenFromIntent(customIntent.intent)
-//				Log.d(TAG, "SESSION TOKEN $sessionToken")
-//				customIntent
-//						.launchUrl(this@MainActivity, Uri.parse(url))
-//			}
-//
-//			override fun onServiceDisconnected(name: ComponentName?) {
-//				Log.d(TAG, "Service disconnected?")
-//			}
-//		})
-
 	}
 
 	suspend fun askBatteryOptimizationsIfNeeded() {
