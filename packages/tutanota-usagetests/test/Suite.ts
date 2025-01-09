@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import { PingAdapter, Stage, UsageTest } from "../lib/index.js"
 import { UsageTestController } from "../lib/model/UsageTestController.js"
 
@@ -16,7 +16,7 @@ o.spec("Main", function () {
 		const test = new UsageTest(testId, "test 123", 0, true)
 		test.pingAdapter = new MockPingAdapter()
 
-		const rendered = test.renderVariant({
+		const rendered = test.getVariant({
 			[0]: () => 0,
 			[1]: () => 1,
 		})
@@ -227,4 +227,6 @@ o.spec("Main", function () {
 	})
 })
 
-o.run()
+const result = await o.run()
+o.printReport(result)
+o.terminateProcess(result)

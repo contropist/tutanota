@@ -1,20 +1,28 @@
-import path from "path"
+import path from "node:path"
 import fs from "fs-extra"
 import { build as esbuild } from "esbuild"
-import { getTutanotaAppVersion, runStep, sh, writeFile } from "./buildUtils.js"
-import { $ } from "zx"
+import { getTutanotaAppVersion, runStep, writeFile } from "./buildUtils.js"
 import "zx/globals"
 import * as env from "./env.js"
-import { externalTranslationsPlugin, keytarNativePlugin, libDeps, preludeEnvPlugin, sqliteNativePlugin } from "./esbuildUtils.js"
-import { fileURLToPath } from "url"
+import { externalTranslationsPlugin, libDeps, mimimiNativePlugin, preludeEnvPlugin, sqliteNativePlugin } from "./esbuildUtils.js"
+import { fileURLToPath } from "node:url"
 import * as LaunchHtml from "./LaunchHtml.js"
-import os from "os"
+import os from "node:os"
 import { checkOfflineDatabaseMigrations } from "./checkOfflineDbMigratons.js"
+import { buildRuntimePackages } from "./packageBuilderFunctions.js"
+import { domainConfigs } from "./DomainConfigs.js"
+import { sh } from "./sh.js"
 
-export async function runDevBuild({ stage, host, desktop, clean, ignoreMigrations }) {
+export async function runDevBuild({ stage, host, desktop, clean, ignoreMigrations, app }) {
+	const isCalendarBuild = app === "calendar"
+	const tsConfig = isCalendarBuild ? "tsconfig-calendar-app.json" : "tsconfig.json"
+	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
+
+	console.log("Building dev for", app)
+
 	if (clean) {
 		await runStep("Clean", async () => {
-			await fs.emptyDir("build")
+			await fs.emptyDir(buildDir)
 		})
 	}
 
@@ -27,28 +35,75 @@ export async function runDevBuild({ stage, host, desktop, clean, ignoreMigration
 	})
 
 	await runStep("Packages", async () => {
-		await $`npm run build-runtime-packages`
+		await buildRuntimePackages()
 	})
 
-	const version = getTutanotaAppVersion()
+	const version = await getTutanotaAppVersion()
 
 	await runStep("Types", async () => {
-		await sh`npx tsc --incremental ${true} --noEmit true`
+		await sh`npx tsc --project ${tsConfig} --incremental ${true} --noEmit true`
 	})
 
-	const mode = desktop ? "Desktop" : "Browser"
-	await buildWebPart({ stage, host, version, mode })
+	/**
+	 * @param host {string|null}
+	 * @return {DomainConfigMap}
+	 */
+	function updateDomainConfigForHostname(host) {
+		if (host == null) {
+			return { ...domainConfigs }
+		} else {
+			const url = new URL(host)
+			const { protocol, hostname, port } = url
+			return {
+				...domainConfigs,
+				[url.hostname]: {
+					firstPartyDomain: true,
+					partneredDomainTransitionUrl: `${protocol}//${hostname}:${port}`,
+					apiUrl: `${protocol}//${hostname}:${port}`,
+					paymentUrl: `${protocol}//${hostname}:${port}/braintree.html`,
+					webauthnUrl: `${protocol}//${hostname}:${port}/webauthn`,
+					legacyWebauthnUrl: `${protocol}//${hostname}:${port}/webauthn`,
+					webauthnMobileUrl: `${protocol}//${hostname}:${port}/webauthnmobile`,
+					legacyWebauthnMobileUrl: `${protocol}//${hostname}:${port}/webauthnmobile`,
+					webauthnRpId: `${hostname}:${port}`,
+					u2fAppId: `${protocol}//${hostname}:${port}/u2f-appid.json`,
+					giftCardBaseUrl: `${protocol}//${hostname}:${port}/giftcard`,
+					referralBaseUrl: `${protocol}//${hostname}:${port}/signup`,
+					websiteBaseUrl: "https://tuta.com",
+				},
+			}
+		}
+	}
+
+	const extendedDomainConfigs = updateDomainConfigForHostname(host)
+
+	await buildWebPart({ stage, host, version, domainConfigs: extendedDomainConfigs, app })
 
 	if (desktop) {
-		await buildDesktopPart({ version })
+		await buildDesktopPart({ version, app })
 	}
 }
 
-async function buildWebPart({ stage, host, version }) {
+/**
+ * @param p {object}
+ * @param p.stage {string}
+ * @param p.host {string|null}
+ * @param p.version {string}
+ * @param p.domainConfigs {DomainConfigMap}
+ * @param p.app {string}
+ * @return {Promise<void>}
+ */
+async function buildWebPart({ stage, host, version, domainConfigs, app }) {
+	const isCalendarBuild = app === "calendar"
+	const tsConfig = isCalendarBuild ? "tsconfig-calendar-app.json" : "tsconfig.json"
+	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
+	const entryFile = isCalendarBuild ? "src/calendar-app/calendar-app.ts" : "src/mail-app/app.ts"
+	const workerFile = isCalendarBuild ? "src/calendar-app/workerUtils/worker/calendar-worker.ts" : "src/mail-app/workerUtils/worker/mail-worker.ts"
+
 	await runStep("Web: Assets", async () => {
-		await prepareAssets(stage, host, version)
+		await prepareAssets(stage, host, version, domainConfigs, buildDir)
 		await fs.promises.writeFile(
-			"build/worker-bootstrap.js",
+			`${buildDir}/worker-bootstrap.js`,
 			`importScripts("./polyfill.js")
 importScripts("./worker.js")
 `,
@@ -56,10 +111,12 @@ importScripts("./worker.js")
 	})
 
 	await runStep("Web: Esbuild", async () => {
+		const { esbuildWasmLoader } = await import("@tutao/tuta-wasm-loader")
 		await esbuild({
 			// Using named entry points so that it outputs build/worker.js and not build/api/worker/worker.js
-			entryPoints: { app: "src/app.ts", worker: "src/api/worker/worker.ts" },
-			outdir: "./build/",
+			entryPoints: { app: entryFile, worker: workerFile },
+			outdir: `./${buildDir}/`,
+			tsconfig: tsConfig,
 			// Why bundle at the moment:
 			// - We need to include all the imports: everything in src + libs. We could use wildcard in the future.
 			// - We can't have imports or dynamic imports in the worker because we can't start it as a module because of Firefox.
@@ -73,38 +130,68 @@ importScripts("./worker.js")
 				// See Env.ts for explanation
 				NO_THREAD_ASSERTIONS: "true",
 			},
-			plugins: [libDeps(), externalTranslationsPlugin()],
+			plugins: [
+				libDeps(),
+				externalTranslationsPlugin(),
+				esbuildWasmLoader({
+					output: `${process.cwd()}/${buildDir}/wasm`,
+					webassemblyLibraries: [
+						{
+							name: "liboqs.wasm",
+							command: "make -f Makefile_liboqs build",
+							workingDir: `${process.cwd()}/libs/webassembly/`,
+							env: {
+								WASM: `${process.cwd()}/${buildDir}/wasm/liboqs.wasm`,
+							},
+						},
+						{
+							name: "argon2.wasm",
+							command: "make -f Makefile_argon2 build",
+							workingDir: `${process.cwd()}/libs/webassembly/`,
+							env: {
+								WASM: `${process.cwd()}/${buildDir}/wasm/argon2.wasm`,
+							},
+						},
+					],
+				}),
+			],
 		})
 	})
 }
 
-async function buildDesktopPart({ version }) {
+async function buildDesktopPart({ version, app }) {
+	const isCalendarBuild = app === "calendar"
+	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
+
 	await runStep("Desktop: Esbuild", async () => {
 		await esbuild({
-			entryPoints: ["src/desktop/DesktopMain.ts"],
-			outdir: "./build/desktop",
+			entryPoints: ["src/common/desktop/DesktopMain.ts", "src/common/desktop/sqlworker.ts"],
+			outdir: `./${buildDir}/desktop`,
 			// Why we bundle at the moment:
 			// - We need to include all the imports: we currently use some node_modules directly, without pre-bundling them like rest of libs we can't avoid it
 			bundle: true,
 			format: "cjs",
 			sourcemap: "linked",
 			platform: "node",
-			external: ["electron"],
+			external: ["electron", "*.node"],
+			banner: {
+				js: `globalThis.buildOptions = globalThis.buildOptions ?? {}
+globalThis.buildOptions.sqliteNativePath = "./better-sqlite3.node";`,
+			},
 			plugins: [
 				libDeps(),
 				sqliteNativePlugin({
 					environment: "electron",
-					dstPath: "./build/desktop/better_sqlite3.node",
+					dstPath: `./${buildDir}/desktop/better_sqlite3.node`,
 					platform: process.platform,
+					architecture: process.arch,
 					nativeBindingPath: "./better_sqlite3.node",
 				}),
-				keytarNativePlugin({
-					environment: "electron",
-					dstPath: "./build/desktop/keytar.node",
-					nativeBindingPath: "./keytar.node",
+				mimimiNativePlugin({
+					dstPath: `./${buildDir}/desktop/`,
 					platform: process.platform,
 				}),
-				preludeEnvPlugin(env.create({ staticUrl: null, version, mode: "Desktop", dist: false })),
+				preludeEnvPlugin(env.create({ staticUrl: null, version, mode: "Desktop", dist: false, domainConfigs })),
 				externalTranslationsPlugin(),
 			],
 		})
@@ -112,30 +199,35 @@ async function buildDesktopPart({ version }) {
 
 	await runStep("Desktop: assets", async () => {
 		const desktopIconsPath = "./resources/desktop-icons"
-		await fs.copy(desktopIconsPath, "./build/desktop/resources/icons", { overwrite: true })
+		await fs.copy(desktopIconsPath, `./${buildDir}/desktop/resources/icons`, { overwrite: true })
+		await fs.move(`./${buildDir}/desktop/resources/icons/logo-solo-dev.png`, `./${buildDir}/desktop/resources/icons/logo-solo-red.png`, { overwrite: true })
+		await fs.move(`./${buildDir}/desktop/resources/icons/logo-solo-dev-small.png`, `./${buildDir}/desktop/resources/icons/logo-solo-red-small.png`, {
+			overwrite: true,
+		})
 		const templateGenerator = (await import("./electron-package-json-template.js")).default
 		const packageJSON = await templateGenerator({
 			nameSuffix: "-debug",
 			version,
-			updateUrl: "http://localhost:9000/client/build",
+			updateUrl: `http://localhost:9000/client/${buildDir}`,
 			iconPath: path.join(desktopIconsPath, "logo-solo-red.png"),
 			sign: false,
+			architecture: "x64",
 		})
 		const content = JSON.stringify(packageJSON, null, 2)
 
-		await fs.createFile("./build/package.json")
-		await fs.writeFile("./build/package.json", content, "utf-8")
+		await fs.createFile(`./${buildDir}/package.json`)
+		await fs.writeFile(`./${buildDir}/package.json`, content, "utf-8")
 
-		await fs.mkdir("build/desktop", { recursive: true })
-		await fs.copyFile("src/desktop/preload.js", "build/desktop/preload.js")
-		await fs.copyFile("src/desktop/preload-webdialog.js", "build/desktop/preload-webdialog.js")
+		await fs.mkdir(`${buildDir}/desktop`, { recursive: true })
+		await fs.copyFile("src/common/desktop/preload.js", `${buildDir}/desktop/preload.js`)
+		await fs.copyFile("src/common/desktop/preload-webdialog.js", `${buildDir}/desktop/preload-webdialog.js`)
 	})
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = __dirname.split(path.sep).slice(0, -1).join(path.sep)
 
-async function createBootstrap(env) {
+async function createBootstrap(env, buildDir) {
 	let jsFileName
 	let htmlFileName
 	switch (env.mode) {
@@ -160,9 +252,9 @@ if (env.staticUrl == null && window.tutaoDefaultApiUrl) {
     window.env.staticUrl = window.tutaoDefaultApiUrl
 }
 import('./app.js')`
-	await writeFile(`./build/${jsFileName}`, template)
+	await writeFile(`./${buildDir}/${jsFileName}`, template)
 	const html = await LaunchHtml.renderHtml(imports, env)
-	await writeFile(`./build/${htmlFileName}`, html)
+	await writeFile(`./${buildDir}/${htmlFileName}`, html)
 }
 
 function getStaticUrl(stage, mode, host) {
@@ -173,9 +265,9 @@ function getStaticUrl(stage, mode, host) {
 		// This is only relevant for browser environment.
 		return null
 	} else if (stage === "test") {
-		return "https://test.tutanota.com"
+		return "https://app.test.tuta.com"
 	} else if (stage === "prod") {
-		return "https://mail.tutanota.com"
+		return "https://app.tuta.com"
 	} else if (stage === "local") {
 		return "http://" + os.hostname() + ":9000"
 	} else {
@@ -184,20 +276,31 @@ function getStaticUrl(stage, mode, host) {
 	}
 }
 
-export async function prepareAssets(stage, host, version) {
+/**
+ * @param stage {string}
+ * @param host {string|null}
+ * @param version {string}
+ * @param domainConfigs {DomainConfigMap}
+ * @param buildDir {string}
+ * @return {Promise<void>}
+ */
+export async function prepareAssets(stage, host, version, domainConfigs, buildDir) {
 	await Promise.all([
-		await fs.emptyDir(path.join(root, "build/images")),
-		fs.copy(path.join(root, "/resources/favicon"), path.join(root, "/build/images")),
-		fs.copy(path.join(root, "/resources/images/"), path.join(root, "/build/images")),
-		fs.copy(path.join(root, "/resources/desktop-icons"), path.join(root, "/build/icons")),
-		fs.copy(path.join(root, "/resources/wordlibrary.json"), path.join(root, "build/wordlibrary.json")),
-		fs.copy(path.join(root, "/src/braintree.html"), path.join(root, "build/braintree.html")),
+		await fs.emptyDir(path.join(root, `${buildDir}/images`)),
+		fs.copy(path.join(root, "/resources/favicon"), path.join(root, `/${buildDir}/images`)),
+		fs.copy(path.join(root, "/resources/images/"), path.join(root, `/${buildDir}/images`)),
+		fs.copy(path.join(root, "/resources/pdf/"), path.join(root, `/${buildDir}/pdf`)),
+		fs.copy(path.join(root, "/resources/desktop-icons"), path.join(root, `/${buildDir}/icons`)),
+		fs.copy(path.join(root, "/resources/wordlibrary.json"), path.join(root, `${buildDir}/wordlibrary.json`)),
+		fs.copy(path.join(root, "/src/braintree.html"), path.join(root, `${buildDir}/braintree.html`)),
 	])
 
 	// write empty file
-	await fs.writeFile("build/polyfill.js", "")
+	await fs.writeFile(`${buildDir}/polyfill.js`, "")
 
-	for (const mode of ["Browser", "App", "Desktop"]) {
-		await createBootstrap(env.create({ staticUrl: getStaticUrl(stage, mode, host), version, mode, dist: false }))
+	/** @type {EnvMode[]} */
+	const modes = ["Browser", "App", "Desktop"]
+	for (const mode of modes) {
+		await createBootstrap(env.create({ staticUrl: getStaticUrl(stage, mode, host), version, mode, dist: false, domainConfigs }), buildDir)
 	}
 }

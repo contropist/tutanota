@@ -1,18 +1,22 @@
-import o from "ospec"
-import { ThemeController } from "../../../src/gui/ThemeController.js"
-import type { ThemeCustomizations } from "../../../src/misc/WhitelabelCustomizations.js"
+import o from "@tutao/otest"
+import { ThemeController } from "../../../src/common/gui/ThemeController.js"
+import type { ThemeCustomizations } from "../../../src/common/misc/WhitelabelCustomizations.js"
 import { downcast } from "@tutao/tutanota-utils"
-import { ThemeFacade } from "../../../src/native/common/generatedipc/ThemeFacade"
-import { HtmlSanitizer } from "../../../src/misc/HtmlSanitizer.js"
+import { ThemeFacade } from "../../../src/common/native/common/generatedipc/ThemeFacade"
+import { HtmlSanitizer } from "../../../src/common/misc/HtmlSanitizer.js"
 import { matchers, object, when } from "testdouble"
 import { verify } from "@tutao/tutanota-test-utils"
+import { Theme } from "../../../src/common/gui/theme.js"
+import { AppType } from "../../../src/common/misc/ClientConstants.js"
 
-o.spec("Theme Controller", function () {
+o.spec("ThemeController", function () {
 	let themeManager: ThemeController
 	let themeFacadeMock: ThemeFacade
 	let htmlSanitizerMock: HtmlSanitizer
+	let theme: Partial<Theme>
 
 	o.beforeEach(async function () {
+		theme = {}
 		themeFacadeMock = object()
 		when(themeFacadeMock.getThemes()).thenResolve([])
 
@@ -20,11 +24,11 @@ o.spec("Theme Controller", function () {
 		// this is called in the constructor. Eh!
 		when(htmlSanitizerMock.sanitizeHTML(matchers.anything())).thenReturn({
 			html: "sanitized",
-			externalContent: [],
+			blockedExternalContent: 0,
 			inlineImageCids: [],
 			links: [],
 		})
-		themeManager = new ThemeController(themeFacadeMock, () => Promise.resolve(htmlSanitizerMock))
+		themeManager = new ThemeController(theme, themeFacadeMock, () => Promise.resolve(htmlSanitizerMock), AppType.Integrated)
 		await themeManager.initialized
 	})
 
@@ -36,15 +40,48 @@ o.spec("Theme Controller", function () {
 			base: "light",
 		})
 
-		await themeManager.updateCustomTheme(theme)
+		await themeManager.applyCustomizations(theme)
 
 		const captor = matchers.captor()
 		verify(themeFacadeMock.setThemes(captor.capture()))
-		const savedTheme = captor.values![0][3]
+		const savedTheme = captor.values![0][4]
 		o(savedTheme.themeId).equals("HelloFancyId")
 		o(savedTheme.content_bg).equals("#fffeee")
 		o(savedTheme.logo).equals("sanitized")
 		o(savedTheme.content_fg).equals(themeManager.getDefaultTheme().content_fg)
-		o(themeManager._theme.logo).equals("sanitized")
+		o(themeManager.getCurrentTheme().logo).equals("sanitized")
+	})
+
+	o("when using automatic theme and preferring dark, dark theme is applied, and themeId is automatic", async function () {
+		when(themeFacadeMock.getThemePreference()).thenResolve("auto:light|dark")
+		when(themeFacadeMock.prefersDark()).thenResolve(true)
+
+		await themeManager.reloadTheme()
+
+		o(themeManager.getCurrentTheme().themeId).equals("dark")
+		o(themeManager.themeId).equals("dark")
+		o(themeManager.themePreference).equals("auto:light|dark")
+	})
+
+	o("when using automatic theme and preferring light, light theme is applied, and themeId is automatic", async function () {
+		when(themeFacadeMock.getThemePreference()).thenResolve("auto:light|dark")
+		when(themeFacadeMock.prefersDark()).thenResolve(false)
+
+		await themeManager.reloadTheme()
+
+		o(themeManager.getCurrentTheme().themeId).equals("light")
+		o(themeManager.themeId).equals("light")
+		o(themeManager.themePreference).equals("auto:light|dark")
+	})
+
+	o("when switching to automatic and preferring the light theme, light theme is applied, and themeId is automatic", async function () {
+		when(themeFacadeMock.getThemePreference()).thenResolve("dark")
+		await themeManager._initializeTheme()
+
+		when(themeFacadeMock.prefersDark()).thenResolve(false)
+		await themeManager.setThemePreference("automatic")
+
+		o(themeManager.getCurrentTheme().themeId).equals("light")
+		o(themeManager.themeId).equals("automatic")
 	})
 })

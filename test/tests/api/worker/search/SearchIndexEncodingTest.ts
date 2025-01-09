@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
 	appendBinaryBlocks,
 	calculateNeededSpace,
@@ -8,12 +8,13 @@ import {
 	iterateBinaryBlocks,
 	numberOfBytes,
 	removeBinaryBlockRanges,
-} from "../../../../../src/api/worker/search/SearchIndexEncoding.js"
+} from "../../../../../src/common/api/worker/search/SearchIndexEncoding.js"
 import { spy as makeSpy } from "@tutao/tutanota-test-utils"
-import { concat, flat } from "@tutao/tutanota-utils"
+import { concat } from "@tutao/tutanota-utils"
+
 o.spec("SearchIndexEncoding test", function () {
 	o("numberOfBytes", function () {
-		;[
+		const cases = [
 			[0, 0],
 			[128, 1],
 			[255, 1],
@@ -23,7 +24,10 @@ o.spec("SearchIndexEncoding test", function () {
 			[512, 2],
 			[Math.pow(2, 16) - 1, 2],
 			[Math.pow(2, 16), 3], // 65536
-		].forEach(([num, res]) => o(numberOfBytes(num)).equals(res)(`${num} should require ${res}`))
+		]
+		for (const [num, res] of cases) {
+			o(numberOfBytes(num)).equals(res)(`${num} should require ${res}`)
+		}
 	})
 	o("calculateNeededSpaceSingleArray", function () {
 		o(calculateNeededSpace([new Uint8Array(32)])).equals(1 + 32)
@@ -119,7 +123,7 @@ o.spec("SearchIndexEncoding test", function () {
 			// l  d  l  l  d  d  d  l  l  d  l  d  d
 			// [1 ]  [2          ]  [3     ] [4    ]
 			// "i" - length, "d" data
-			const row = new Uint8Array(flat([shortBlock, longBlock, anotherLongBlock, anotherShortBlock]))
+			const row = new Uint8Array([shortBlock, longBlock, anotherLongBlock, anotherShortBlock].flat())
 			const spy = makeSpy()
 			iterateBinaryBlocks(row, spy)
 			o(JSON.stringify(spy.invocations)).equals(

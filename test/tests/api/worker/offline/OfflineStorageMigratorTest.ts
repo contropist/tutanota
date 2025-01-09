@@ -1,14 +1,15 @@
-import o from "ospec"
-import { OfflineMigration, OfflineStorageMigrator } from "../../../../../src/api/worker/offline/OfflineStorageMigrator.js"
-import { OfflineStorage } from "../../../../../src/api/worker/offline/OfflineStorage.js"
+import o from "@tutao/otest"
+import { OfflineMigration, OfflineStorageMigrator } from "../../../../../src/common/api/worker/offline/OfflineStorageMigrator.js"
+import { OfflineStorage } from "../../../../../src/common/api/worker/offline/OfflineStorage.js"
 import { func, instance, matchers, object, when } from "testdouble"
 import { assertThrows, verify } from "@tutao/tutanota-test-utils"
-import { ModelInfos } from "../../../../../src/api/common/EntityFunctions.js"
+import { ModelInfos } from "../../../../../src/common/api/common/EntityFunctions.js"
 import { typedEntries } from "@tutao/tutanota-utils"
-import { ProgrammingError } from "../../../../../src/api/common/error/ProgrammingError.js"
-import { SqlCipherFacade } from "../../../../../src/native/common/generatedipc/SqlCipherFacade.js"
+import { ProgrammingError } from "../../../../../src/common/api/common/error/ProgrammingError.js"
+import { SqlCipherFacade } from "../../../../../src/common/native/common/generatedipc/SqlCipherFacade.js"
+import { OutOfSyncError } from "../../../../../src/common/api/common/error/OutOfSyncError.js"
 
-o.spec("OfflineStorageMigrator", async function () {
+o.spec("OfflineStorageMigrator", function () {
 	const modelInfos: ModelInfos = {
 		base: {
 			version: 1,
@@ -98,17 +99,17 @@ o.spec("OfflineStorageMigrator", async function () {
 		verify(storage.setStoredModelVersion("tutanota", matchers.anything()), { times: 0 })
 	})
 
-	o("when migration exists and it the version is compatible the migration is not run", async function () {
-		// stored is older than current so we actually "migrate" something
-		when(storage.dumpMetadata()).thenResolve({ "tutanota-version": 41 })
+	o("when the stored version is newer than the runtime version throw OutOfSyncError", async function () {
+		// stored is new than the current
+		const currentModelVersion = modelInfos.tutanota.version
+		when(storage.dumpMetadata()).thenResolve({ "tutanota-version": currentModelVersion + 1 })
 		const migration: OfflineMigration = {
 			app: "tutanota",
-			version: 40,
+			version: modelInfos.tutanota.compatibleSince,
 			migrate: func() as OfflineMigration["migrate"],
 		}
 		migrations.push(migration)
-
-		await migrator.migrate(storage, sqlCipherFacade)
+		await assertThrows(OutOfSyncError, () => migrator.migrate(storage, sqlCipherFacade))
 
 		verify(migration.migrate(storage, sqlCipherFacade), { times: 0 })
 		verify(storage.setStoredModelVersion("tutanota", matchers.anything()), { times: 0 })

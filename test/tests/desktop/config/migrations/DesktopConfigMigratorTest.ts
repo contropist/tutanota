@@ -1,9 +1,9 @@
-import o from "ospec"
-import { DesktopConfigMigrator } from "../../../../../src/desktop/config/migrations/DesktopConfigMigrator.js"
-import { DesktopNativeCryptoFacade } from "../../../../../src/desktop/DesktopNativeCryptoFacade.js"
+import o from "@tutao/otest"
+import { DesktopConfigMigrator } from "../../../../../src/common/desktop/config/migrations/DesktopConfigMigrator.js"
+import { DesktopNativeCryptoFacade } from "../../../../../src/common/desktop/DesktopNativeCryptoFacade.js"
 import { downcast } from "@tutao/tutanota-utils"
 import { makeKeyStoreFacade } from "../../../TestUtils.js"
-import { DesktopKeyStoreFacade } from "../../../../../src/desktop/KeyStoreFacadeImpl.js"
+import { DesktopKeyStoreFacade } from "../../../../../src/common/desktop/DesktopKeyStoreFacade.js"
 
 o.spec("DesktopConfigMigrator", function () {
 	let migrator
@@ -45,11 +45,12 @@ o.spec("DesktopConfigMigrator", function () {
 		}
 
 		const requiredResult = {
+			appPassSalt: null,
 			heartbeatTimeoutInSeconds: 30,
 			defaultDownloadPath: null,
 			enableAutoUpdate: true,
 			runAsTrayApp: true,
-			desktopConfigVersion: 7,
+			desktopConfigVersion: 8,
 			showAutoUpdateOption: true,
 			spellcheck: "de-DE",
 			offlineStorageEnabled: false,
@@ -70,8 +71,9 @@ o.spec("DesktopConfigMigrator", function () {
 			runAsTrayApp: true,
 		}
 		const requiredResult = {
+			appPassSalt: null,
 			runAsTrayApp: true,
-			desktopConfigVersion: 7,
+			desktopConfigVersion: 8,
 			showAutoUpdateOption: true,
 			mailExportMode: "eml",
 			spellcheck: "",

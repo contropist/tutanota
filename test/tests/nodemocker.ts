@@ -2,8 +2,8 @@
  * @fileoverview This is an old homebrew mocking attempt. This is depreacted. Please use testdouble instead.
  */
 
-import o from "ospec"
 import { downcast } from "@tutao/tutanota-utils"
+import { spy } from "@tutao/tutanota-test-utils"
 
 /**
  * you need to call .get() on the return value to actually register the replacer to spyify its functions.
@@ -35,14 +35,16 @@ export function spyify<T>(obj: T): T {
 	const anyObj: any = obj
 	switch (typeof obj) {
 		case "function":
-			// @ts-ignore
-			const spy = o.spy(obj)
+			const fSpy = spy(obj as any)
 
-			Object.keys(anyObj) // classes are functions
-				.filter((k) => !["args", "callCount", "spy"].includes(k))
-				.forEach((k) => (spy[k] = spyify(anyObj[k])))
+			// classes are functions
+			for (const k of Object.keys(anyObj)) {
+				if (!["args", "callCount", "spy"].includes(k)) {
+					fSpy[k] = spyify(anyObj[k])
+				}
+			}
 
-			return downcast<T>(spy)
+			return downcast<T>(fSpy)
 		case "object":
 			if (anyObj instanceof Promise) {
 				return downcast<T>(anyObj)
@@ -87,9 +89,9 @@ export type Mocked<T> = Class<T> & {
 function classify(template: { prototype: {}; statics: {} }): Mocked<any> {
 	const cls = function () {
 		cls.mockedInstances.push(this)
-		Object.keys(template.prototype).forEach((p) => {
+		for (const p of Object.keys(template.prototype)) {
 			if ("function" === typeof template.prototype[p]) {
-				this[p] = o.spy(template.prototype[p]) // don't use spyify, we don't want these to be spyCached
+				this[p] = spy(template.prototype[p]) // don't use spyify, we don't want these to be spyCached
 			} else if ("object" === typeof template.prototype[p]) {
 				// duplicate properties
 				const obj = template.prototype[p]
@@ -103,7 +105,7 @@ function classify(template: { prototype: {}; statics: {} }): Mocked<any> {
 			} else {
 				this[p] = template.prototype[p]
 			}
-		})
+		}
 
 		if (typeof template.prototype["constructor"] === "function") {
 			template.prototype["constructor"].apply(this, arguments)
@@ -111,7 +113,9 @@ function classify(template: { prototype: {}; statics: {} }): Mocked<any> {
 	}
 
 	if (template.statics) {
-		Object.keys(template.statics).forEach((s) => (cls[s] = template.statics[s]))
+		for (const s of Object.keys(template.statics)) {
+			cls[s] = template.statics[s]
+		}
 	}
 
 	cls.mockedInstances = []

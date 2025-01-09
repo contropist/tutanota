@@ -1,16 +1,17 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import type { App } from "electron"
-import type { DesktopNativeCryptoFacade } from "../../../src/desktop/DesktopNativeCryptoFacade.js"
+import type { DesktopNativeCryptoFacade } from "../../../src/common/desktop/DesktopNativeCryptoFacade.js"
 import { delay, downcast } from "@tutao/tutanota-utils"
-import { ElectronUpdater } from "../../../src/desktop/ElectronUpdater.js"
-import type { UpdaterWrapper } from "../../../src/desktop/UpdaterWrapper.js"
+import { ElectronUpdater } from "../../../src/common/desktop/ElectronUpdater.js"
+import type { UpdaterWrapper } from "../../../src/common/desktop/UpdaterWrapper.js"
 import n from "../nodemocker.js"
-import type { DesktopConfig } from "../../../src/desktop/config/DesktopConfig.js"
-import type { DesktopNotifier } from "../../../src/desktop/DesktopNotifier.js"
-import { lang } from "../../../src/misc/LanguageViewModel.js"
-import en from "../../../src/translations/en.js"
+import type { DesktopConfig } from "../../../src/common/desktop/config/DesktopConfig.js"
+import type { DesktopNotifier } from "../../../src/common/desktop/DesktopNotifier.js"
+import { lang } from "../../../src/common/misc/LanguageViewModel.js"
+import en from "../../../src/mail-app/translations/en.js"
 import { matchers, object, verify, when } from "testdouble"
-import { FsExports } from "../../../src/desktop/ElectronExportTypes.js"
+import { FsExports } from "../../../src/common/desktop/ElectronExportTypes.js"
+import { spy } from "@tutao/tutanota-test-utils"
 
 lang.init(en)
 
@@ -33,12 +34,12 @@ o.spec("ElectronUpdater Test", function () {
 		when(fs.promises.unlink("downloadedFile.AppImage")).thenResolve()
 		when(fs.promises.readFile("downloadedFile.AppImage")).thenResolve(data)
 		notifier = downcast({
-			showOneShot: o.spy((prop: { title: string; body: string; icon: any }) => Promise.resolve("click")),
+			showOneShot: spy((prop: { title: string; body: string; icon: any }) => Promise.resolve("click")),
 		})
 		conf = downcast({
-			removeListener: o.spy((key: string, cb: () => void) => conf),
-			on: o.spy((key: string) => conf),
-			setVar: o.spy(),
+			removeListener: spy((key: string, cb: () => void) => conf),
+			on: spy((key: string) => conf),
+			setVar: spy(),
 			getVar: (key: string) => {
 				switch (key) {
 					case "enableAutoUpdate":
@@ -84,10 +85,10 @@ o.spec("ElectronUpdater Test", function () {
 		autoUpdater = {
 			callbacks: {},
 			logger: undefined,
-			on: o.spy(function (ev: string, cb: (arg0: any) => void) {
+			on: spy(function (ev: string, cb: (arg0: any) => void) {
 				if (!this.callbacks[ev]) this.callbacks[ev] = []
 				this.callbacks[ev].push({
-					fn: o.spy(cb),
+					fn: spy(cb),
 					once: false,
 				})
 				return this
@@ -95,7 +96,7 @@ o.spec("ElectronUpdater Test", function () {
 			once: function (ev: string, cb: (arg0: any) => void) {
 				if (!this.callbacks[ev]) this.callbacks[ev] = []
 				this.callbacks[ev].push({
-					fn: o.spy(cb),
+					fn: spy(cb),
 					once: true,
 				})
 				return this
@@ -104,18 +105,18 @@ o.spec("ElectronUpdater Test", function () {
 				if (!this.callbacks[ev]) return
 				this.callbacks[ev] = this.callbacks[ev].filter((entry) => entry.fn !== cb)
 			},
-			removeAllListeners: o.spy(function (ev: string) {
+			removeAllListeners: spy(function (ev: string) {
 				this.callbacks[ev] = []
 				return this
 			}),
 			emit: function (ev: string, args: any) {
 				const entries = this.callbacks[ev]
-				entries.forEach((entry) => {
+				for (const entry of entries) {
 					setTimeout(() => entry.fn(args), 1)
-				})
+				}
 				this.callbacks[ev] = entries.filter((entry) => !entry.once)
 			},
-			checkForUpdates: o.spy(function () {
+			checkForUpdates: spy(function () {
 				this.emit("update-available", {
 					downloadedFile: "downloadedFile.AppImage",
 					sha512: shaB64,
@@ -124,7 +125,7 @@ o.spec("ElectronUpdater Test", function () {
 				})
 				return Promise.resolve()
 			}),
-			downloadUpdate: o.spy(function () {
+			downloadUpdate: spy(function () {
 				this.emit("update-downloaded", {
 					downloadedFile: "downloadedFile.AppImage",
 					sha512: shaB64, // "sha512"
@@ -133,11 +134,11 @@ o.spec("ElectronUpdater Test", function () {
 				})
 				return Promise.resolve()
 			}),
-			quitAndInstall: o.spy(),
+			quitAndInstall: spy(),
 		}
 
 		updaterImpl = downcast({
-			electronUpdater: Promise.resolve(autoUpdater),
+			electronUpdater: autoUpdater,
 			updatesEnabledInBuild: () => true,
 		})
 	})
@@ -162,7 +163,7 @@ o.spec("ElectronUpdater Test", function () {
 		o(autoUpdater.quitAndInstall.args[1]).equals(true)
 	})
 	o("update is not available", async function () {
-		autoUpdater.checkForUpdates = o.spy(() => Promise.resolve())
+		autoUpdater.checkForUpdates = spy(() => Promise.resolve())
 		const upd = new ElectronUpdater(conf, notifier, crypto, electron.app, object(), updaterImpl, fs)
 		upd.start()
 		await delay(190)
@@ -274,7 +275,6 @@ o.spec("ElectronUpdater Test", function () {
 		// @ts-ignore
 		upd.stopPolling()
 
-		o(autoUpdater.removeAllListeners.callCount).equals(4)("removeAllListeners")
 		o(notifier.showOneShot.callCount).equals(1)("showOneShot")
 	})
 	o("works if second key is right one", async function () {

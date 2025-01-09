@@ -2,9 +2,10 @@
 
 /** Modifies each function interface to add spy attributes (for convenience). */
 interface Function {
-	callCount: number
-	args: any[]
-	calls: { this: this; args: any[] }[]
+	readonly callCount: number
+	readonly args: any[]
+	readonly calls: any[][]
+	readonly invocations: any[][]
 }
 
 /**
@@ -25,4 +26,5 @@ declare function node<F>(f: F): F
  */
 declare const buildOptions: {
 	readonly sqliteNativePath: string
+	readonly mimimiNativePath: string
 }

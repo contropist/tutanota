@@ -1,19 +1,19 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import { function as tdfn, matchers, object, verify, when } from "testdouble"
 import {
 	DEFAULT_TOTP_NAME,
 	DEFAULT_U2F_NAME,
 	NameValidationStatus,
 	SecondFactorEditModel,
-} from "../../../../../src/settings/login/secondfactor/SecondFactorEditModel.js"
-import { EntityClient } from "../../../../../src/api/common/EntityClient.js"
-import { WebauthnClient } from "../../../../../src/misc/2fa/webauthn/WebauthnClient.js"
-import { createGroupInfo, GroupInfoTypeRef, User } from "../../../../../src/api/entities/sys/TypeRefs.js"
+} from "../../../../../src/common/settings/login/secondfactor/SecondFactorEditModel.js"
+import { EntityClient } from "../../../../../src/common/api/common/EntityClient.js"
+import { WebauthnClient } from "../../../../../src/common/misc/2fa/webauthn/WebauthnClient.js"
+import { GroupInfoTypeRef, User } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
 import { TotpSecret, TotpVerifier } from "@tutao/tutanota-crypto"
 import { noOp } from "@tutao/tutanota-utils"
-import { LanguageViewModel } from "../../../../../src/misc/LanguageViewModel.js"
-import { LoginFacade } from "../../../../../src/api/worker/facades/LoginFacade.js"
-import { SecondFactorType } from "../../../../../src/api/common/TutanotaConstants.js"
+import { LoginFacade } from "../../../../../src/common/api/worker/facades/LoginFacade.js"
+import { SecondFactorType } from "../../../../../src/common/api/common/TutanotaConstants.js"
+import { createTestEntity, domainConfigStub } from "../../../TestUtils.js"
 
 function createTotpKeys(): TotpSecret {
 	const key = new Uint8Array(16)
@@ -28,42 +28,30 @@ o.spec("SecondFactorEditModel", function () {
 	let loginFacadeMock: LoginFacade
 	const totpKeys = createTotpKeys()
 	const validName = "myU2Fkey"
-	const langMock: LanguageViewModel = object()
-	when(langMock.get(matchers.anything())).thenReturn("hello there")
 	// this is too long if you convert it to bytes
 	const invalidName = "🏳️‍🌈🏳️‍🌈🏳️‍🌈🏳️‍🌈🏴‍☠️🏴‍☠️🏴‍☠️🏴‍☠️🏴‍☠️"
+	const hostname = "testhostname"
 
 	async function createSecondFactorModel(params: any): Promise<SecondFactorEditModel> {
 		const model = new SecondFactorEditModel(
 			params.entityClient ?? entityClientMock,
 			params.user ?? userMock,
-			"testaddress@tutanota.de",
 			params.webAuthnClient ?? webAuthnClientMock,
 			totpKeys,
 			params.webauthnSupported ?? true,
-			langMock,
 			loginFacadeMock,
+			hostname,
+			domainConfigStub,
 			params.updateView ?? noOp,
 		)
 		await model.otpInfo.getAsync()
 		return model
 	}
 
-	let originalLocation = global.location
-	o.before(function () {
-		global.location = {
-			hostname: "testhostname",
-		} as any
-	})
-
-	o.after(function () {
-		global.location = originalLocation
-	})
-
 	o.beforeEach(function () {
 		entityClientMock = object()
 		when(entityClientMock.load(GroupInfoTypeRef, matchers.anything())).thenResolve(
-			createGroupInfo({
+			createTestEntity(GroupInfoTypeRef, {
 				mailAddress: "testaddress@tutanota.de",
 			}),
 		)
@@ -135,7 +123,7 @@ o.spec("SecondFactorEditModel", function () {
 	o.spec("saving a second factor", function () {
 		o("saving a u2f key, happy path", async function () {
 			const redrawMock = tdfn("redrawMock")
-			when(entityClientMock.setup(matchers.anything(), matchers.anything())).thenResolve("randomID")
+			when(entityClientMock.setup(matchers.anything(), matchers.anything(), matchers.anything())).thenResolve("randomID")
 			when(webAuthnClientMock.register(matchers.anything(), matchers.anything())).thenResolve({})
 			const model = await createSecondFactorModel({ updateView: redrawMock })
 
@@ -145,12 +133,12 @@ o.spec("SecondFactorEditModel", function () {
 			o(user).deepEquals(userMock)
 
 			verify(redrawMock(), { times: 2 })
-			verify(entityClientMock.setup(matchers.anything(), matchers.anything()), { times: 1 })
+			verify(entityClientMock.setup(matchers.anything(), matchers.anything(), matchers.anything()), { times: 1 })
 		})
 
 		o("saving a totp key, happy path", async function () {
 			const redrawMock = tdfn("redrawMock")
-			when(entityClientMock.setup(matchers.anything(), matchers.anything())).thenResolve("randomID")
+			when(entityClientMock.setup(matchers.anything(), matchers.anything(), matchers.anything())).thenResolve("randomID")
 			when(webAuthnClientMock.register(matchers.anything(), matchers.anything())).thenResolve({})
 			when(loginFacadeMock.generateTotpCode(matchers.anything(), matchers.anything())).thenResolve(123456)
 			const model = await createSecondFactorModel({ updateView: redrawMock })
@@ -161,8 +149,8 @@ o.spec("SecondFactorEditModel", function () {
 			const user = await model.save()
 			o(user).deepEquals(userMock)
 
-			verify(redrawMock(), { times: 2 })
-			verify(entityClientMock.setup(matchers.anything(), matchers.anything()), { times: 1 })
+			verify(redrawMock(), { times: 3 })
+			verify(entityClientMock.setup(matchers.anything(), matchers.anything(), matchers.anything()), { times: 1 })
 		})
 	})
 

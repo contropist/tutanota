@@ -1,7 +1,8 @@
-import o from "ospec"
-import { GroupType } from "../../src/api/common/TutanotaConstants.js"
-import type { MailFolder } from "../../src/api/entities/tutanota/TypeRefs.js"
+import o from "@tutao/otest"
+import { GroupType } from "../../src/common/api/common/TutanotaConstants.js"
+import type { MailFolder } from "../../src/common/api/entities/tutanota/TypeRefs.js"
 import {
+	ContactAddressTypeRef,
 	ContactListTypeRef,
 	ContactTypeRef,
 	createContact,
@@ -9,11 +10,11 @@ import {
 	MailBoxTypeRef,
 	MailFolderTypeRef,
 	MailTypeRef,
-} from "../../src/api/entities/tutanota/TypeRefs.js"
+} from "../../src/common/api/entities/tutanota/TypeRefs.js"
 import { neverNull } from "@tutao/tutanota-utils"
-import { initLocator, locator } from "../../src/api/worker/WorkerLocator.js"
-import { browserDataStub } from "./TestUtils.js"
-import { SessionType } from "../../src/api/common/SessionType.js"
+import { initLocator, locator } from "../../src/mail-app/workerUtils/worker/WorkerLocator.js"
+import { browserDataStub, createTestEntity } from "./TestUtils.js"
+import { SessionType } from "../../src/common/api/common/SessionType.js"
 
 function loadFolders(folderListId: Id): Promise<MailFolder[]> {
 	return locator.cachingEntityClient.loadAll(MailFolderTypeRef, folderListId)
@@ -42,20 +43,17 @@ o.spec("integration test", function () {
 		o(mails.length).equals(8)
 		const contactList = await loadContactList()
 		// create new contact
-		let address = createContactAddress()
+		let address = createTestEntity(ContactAddressTypeRef)
 		address.type = "0"
 		address.address = "Entenhausen"
 		address.customTypeName = "0"
-		let contact = createContact()
-		contact._area = "0"
-		contact._owner = locator.user.getLoggedInUser()._id
+		let contact = createTestEntity(ContactTypeRef)
 		contact._ownerGroup = locator.user.getGroupId(GroupType.Contact)
 		contact.title = "Dr."
 		contact.firstName = "Max"
 		contact.lastName = "Meier"
 		contact.comment = "what?"
 		contact.company = "WIW"
-		contact.autoTransmitPassword = "stop bugging me!"
 		contact.addresses = [address]
 		await locator.cachingEntityClient.setup(contactList.contacts, contact)
 		const contacts = await locator.cachingEntityClient.loadAll(ContactTypeRef, contactList.contacts)

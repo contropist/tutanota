@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
 	AccessBlockedError,
 	AccessDeactivatedError,
@@ -20,8 +20,8 @@ import {
 	ResourceError,
 	SessionExpiredError,
 	TooManyRequestsError,
-} from "../../../../../src/api/common/error/RestError.js"
-import { TutanotaError } from "../../../../../src/api/common/error/TutanotaError.js"
+} from "../../../../../src/common/api/common/error/RestError.js"
+import { TutanotaError } from "@tutao/tutanota-error"
 
 o.spec("RestErrorTest", function () {
 	o("handleRestError should create the correct error classes", () => {
@@ -66,7 +66,7 @@ o.spec("RestErrorTest", function () {
 				thrown = true
 			}
 
-			o(thrown).equals(true)
+			o(thrown).equals(true)(`throws ${type}`)
 		})
 	}
 

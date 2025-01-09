@@ -1,362 +1,290 @@
-import UIKit
-import WebKit
-import UserNotifications
-import DictionaryCoding
 import AuthenticationServices
+import DictionaryCoding
+import TutanotaSharedFramework
+import UIKit
+import UserNotifications
+import WebKit
+
+public let OPEN_CONTACT_EDITOR_CONTACT_ID = "contactId"
+public let OPEN_SETTINGS = "settings"
 
 /// Main screen of the app.
-class ViewController : UIViewController, WKNavigationDelegate, UIScrollViewDelegate {
-  private let themeManager: ThemeManager
-  private let alarmManager: AlarmManager
-  private var bridge: RemoteBridge!
-  private var webView: WKWebView!
-  private var sqlCipherFacade: IosSqlCipherFacade
+class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelegate {
+	private let themeManager: ThemeManager
+	private let alarmManager: AlarmManager
+	private let notificationsHandler: NotificationsHandler
+	private var bridge: RemoteBridge!
+	private var webView: WKWebView!
+	private var sqlCipherFacade: IosSqlCipherFacade
 
-  private var keyboardSize = 0
-  private var isDarkTheme = false
+	private var keyboardSize = 0
+	private var isDarkTheme = false
 
-  init(
-    crypto: IosNativeCryptoFacade,
-    themeManager: ThemeManager,
-    keychainManager: KeychainManager,
-    userPreferences: UserPreferenceFacade,
-    alarmManager: AlarmManager,
-    credentialsEncryption: IosNativeCredentialsFacade,
-    blobUtils:BlobUtil
-  ) {
-    self.themeManager = themeManager
-    self.alarmManager = alarmManager
-    self.bridge = nil
-    self.sqlCipherFacade = IosSqlCipherFacade()
+	init(
+		crypto: TutanotaSharedFramework.IosNativeCryptoFacade,
+		themeManager: ThemeManager,
+		keychainManager: KeychainManager,
+		notificationStorage: NotificationStorage,
+		alarmManager: AlarmManager,
+		notificaionsHandler: NotificationsHandler,
+		credentialsEncryption: IosNativeCredentialsFacade,
+		blobUtils: BlobUtil,
+		contactsSynchronization: IosMobileContactsFacade,
+		userPreferencesProvider: UserPreferencesProvider
+	) {
 
-    super.init(nibName: nil, bundle: nil)
-    let webViewConfig = WKWebViewConfiguration()
-    let folderPath: String = (self.appUrl() as NSURL).deletingLastPathComponent!.path
-    webViewConfig.preferences.setValue(false, forKey: "allowFileAccessFromFileURLs")
-    let apiSchemeHandler = ApiSchemeHandler()
-    webViewConfig.setURLSchemeHandler(apiSchemeHandler, forURLScheme: "api")
-    webViewConfig.setURLSchemeHandler(apiSchemeHandler, forURLScheme: "apis")
-    webViewConfig.setURLSchemeHandler(AssetSchemeHandler(folderPath: folderPath), forURLScheme: "asset")
+		self.themeManager = themeManager
+		self.alarmManager = alarmManager
+		self.notificationsHandler = notificaionsHandler
+		self.bridge = nil
+		self.sqlCipherFacade = IosSqlCipherFacade()
 
-    self.webView = WKWebView(frame: CGRect.zero, configuration: webViewConfig)
-    webView.navigationDelegate = self
-    webView.scrollView.bounces = false
-    webView.scrollView.isScrollEnabled = false
-    webView.scrollView.delegate = self
-    webView.isOpaque = false
-    webView.scrollView.contentInsetAdjustmentBehavior = .never
+		super.init(nibName: nil, bundle: nil)
+		let webViewConfig = WKWebViewConfiguration()
+		let folderPath: String = (self.appUrl() as NSURL).deletingLastPathComponent!.path
+		webViewConfig.preferences.setValue(false, forKey: "allowFileAccessFromFileURLs")
+		let apiSchemeHandler = ApiSchemeHandler()
+		webViewConfig.setURLSchemeHandler(apiSchemeHandler, forURLScheme: "api")
+		webViewConfig.setURLSchemeHandler(apiSchemeHandler, forURLScheme: "apis")
+		webViewConfig.setURLSchemeHandler(AssetSchemeHandler(folderPath: folderPath), forURLScheme: "asset")
 
-    let commonSystemFacade = IosCommonSystemFacade(viewController: self)
-    self.bridge = RemoteBridge(
-      webView: self.webView,
-      viewController: self,
-      commonSystemFacade: commonSystemFacade,
-      fileFacade: IosFileFacade(
-        chooser: TUTFileChooser(viewController: self),
-        viewer: FileViewer(viewController: self),
-        schemeHandler: apiSchemeHandler
-      ),
-      nativeCredentialsFacade: credentialsEncryption,
-      nativeCryptoFacade: crypto,
-      themeFacade: IosThemeFacade(themeManager: themeManager, viewController: self),
-      appDelegate: self.appDelegate,
-      alarmManager: self.alarmManager,
-      userPreferences: userPreferences,
-      keychainManager: keychainManager,
-      webAuthnFacade: IosWebauthnFacade(viewController: self),
-      sqlCipherFacade: self.sqlCipherFacade
-    )
-  }
+		self.webView = WKWebView(frame: CGRect.zero, configuration: webViewConfig)
+		webView.navigationDelegate = self
+		webView.scrollView.bounces = false
+		webView.scrollView.isScrollEnabled = false
+		webView.scrollView.delegate = self
+		webView.isOpaque = false
+		webView.scrollView.contentInsetAdjustmentBehavior = .never
 
-  required init?(coder: NSCoder) {
-    fatalError("Not NSCodable")
-  }
+		#if DEBUG
+			if #available(iOS 16.4, *) { webView.isInspectable = true }
+		#endif
 
-  override func loadView() {
-    super.loadView()
-    self.view.addSubview(webView)
-    WebviewHacks.hideAccessoryBar()
-    WebviewHacks.keyboardDisplayDoesNotRequireUserAction()
+		let commonSystemFacade = IosCommonSystemFacade(viewController: self)
+		self.bridge = RemoteBridge(
+			webView: self.webView,
+			viewController: self,
+			commonSystemFacade: commonSystemFacade,
+			fileFacade: IosFileFacade(chooser: TUTFileChooser(viewController: self), viewer: FileViewer(viewController: self), schemeHandler: apiSchemeHandler),
+			nativeCredentialsFacade: credentialsEncryption,
+			nativeCryptoFacade: crypto,
+			themeFacade: IosThemeFacade(themeManager: themeManager, viewController: self),
+			appDelegate: self.appDelegate,
+			alarmManager: self.alarmManager,
+			notificationStorage: notificationStorage,
+			keychainManager: keychainManager,
+			webAuthnFacade: IosWebauthnFacade(viewController: self),
+			sqlCipherFacade: self.sqlCipherFacade,
+			contactsSynchronization: contactsSynchronization,
+			userPreferencesProvider: userPreferencesProvider,
+			externalCalendarFacade: ExternalCalendarFacadeImpl()
+		)
 
-    NotificationCenter.default.addObserver(self, selector: #selector(onKeyboardDidShow), name: UIResponder.keyboardDidShowNotification, object: nil)
-    NotificationCenter.default.addObserver(self, selector: #selector(onKeyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
-    NotificationCenter.default.addObserver(self, selector: #selector(onKeyboardSizeChange), name: UIResponder.keyboardDidChangeFrameNotification, object: nil)
-  }
+	}
 
-  /// Implementation of WKNavigationDelegate
-  /// Handles links being clicked inside the webview
-  func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-    guard let requestUrl = navigationAction.request.url else {
-      decisionHandler(.cancel)
-      return
-    }
+	required init?(coder: NSCoder) { fatalError("Not NSCodable") }
 
-    if requestUrl.scheme == "asset" && requestUrl.path == self.getAssetUrl().path {
-      decisionHandler(.allow)
-    } else if requestUrl.scheme == "asset" && requestUrl.absoluteString.hasPrefix(self.getAssetUrl().absoluteString) {
-      // If the app is removed from memory, the URL won't point to the file but will have additional path.
-      // We ignore additional path for now.
-      decisionHandler(.cancel)
-      self.loadMainPage(params:[:])
-    } else {
-      decisionHandler(.cancel)
-      UIApplication.shared.open(requestUrl, options:[:])
-    }
+	override func loadView() {
+		super.loadView()
+		self.view.addSubview(webView)
+		WebviewHacks.hideAccessoryBar()
+		WebviewHacks.keyboardDisplayDoesNotRequireUserAction()
 
-  }
+		NotificationCenter.default.addObserver(self, selector: #selector(onKeyboardDidShow), name: UIResponder.keyboardDidShowNotification, object: nil)
+		NotificationCenter.default.addObserver(self, selector: #selector(onKeyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(onKeyboardSizeChange),
+			name: UIResponder.keyboardDidChangeFrameNotification,
+			object: nil
+		)
+	}
 
-  var appDelegate: AppDelegate {
-    get {
-      UIApplication.shared.delegate as! AppDelegate
-    }
-  }
+	/// Implementation of WKNavigationDelegate
+	/// Handles links being clicked inside the webview
+	func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+		guard let requestUrl = navigationAction.request.url else {
+			decisionHandler(.cancel)
+			return
+		}
 
-  func loadMainPage(params: [String : String]) {
-    DispatchQueue.main.async {
-      self._loadMainPage(params: params)
-    }
-  }
+		if requestUrl.scheme == "asset" && requestUrl.path == self.getAssetUrl().path {
+			decisionHandler(.allow)
+		} else if requestUrl.scheme == "asset" && requestUrl.absoluteString.hasPrefix(self.getAssetUrl().absoluteString) {
+			// If the app is removed from memory, the URL won't point to the file but will have additional path.
+			// We ignore additional path for now.
+			decisionHandler(.cancel)
+			self.loadMainPage(params: [:])
+		} else {
+			decisionHandler(.cancel)
+			UIApplication.shared.open(requestUrl, options: [:])
+		}
 
-  @objc
-  private func onKeyboardDidShow(note: Notification) {
-    let rect = note.userInfo![UIResponder.keyboardFrameEndUserInfoKey] as! CGRect
-    self.onAnyKeyboardSizeChange(newHeight: rect.size.height)
-  }
+	}
 
-  @objc
-  private func onKeyboardWillHide() {
-    self.onAnyKeyboardSizeChange(newHeight: 0)
-  }
+	var appDelegate: AppDelegate { get { UIApplication.shared.delegate as! AppDelegate } }
 
-  @objc
-  private func onKeyboardSizeChange(note: Notification) {
-    let rect = note.userInfo![UIResponder.keyboardFrameEndUserInfoKey] as! CGRect
-    let newHeight = rect.size.height
-    if self.keyboardSize != 0 && self.keyboardSize != Int(newHeight) {
-      self.onAnyKeyboardSizeChange(newHeight: newHeight)
-    }
-  }
+	func loadMainPage(params: [String: String]) { DispatchQueue.main.async { self._loadMainPage(params: params) } }
 
-  private func onAnyKeyboardSizeChange(newHeight: CGFloat) {
-    self.keyboardSize = Int(newHeight)
-    Task {
-      try await MobileFacadeSendDispatcher(transport: self.bridge).keyboardSizeChanged(self.keyboardSize)
-    }
-  }
+	@objc private func onKeyboardDidShow(note: Notification) {
+		let rect = note.userInfo![UIResponder.keyboardFrameEndUserInfoKey] as! CGRect
+		self.onAnyKeyboardSizeChange(newHeight: rect.size.height)
+	}
 
-  func onApplicationDidEnterBackground() {
-    // When the user leaves the app we want to perform "incremental_vacuum" on the offline database.
-    // We perform vacuum once the app is put into background instead of when the app is terminated as on iOS
-    // we do not have enough time before the app is terminated by the system.
-     Task {
-       try await self.sqlCipherFacade.vaccumDb()
-     }
-  }
+	@objc private func onKeyboardWillHide() { self.onAnyKeyboardSizeChange(newHeight: 0) }
 
-  func onApplicationWillTerminate() {
-    Task {
-	  try await self.sqlCipherFacade.closeDb()
-    }
-  }
+	@objc private func onKeyboardSizeChange(note: Notification) {
+		let rect = note.userInfo![UIResponder.keyboardFrameEndUserInfoKey] as! CGRect
+		let newHeight = rect.size.height
+		if self.keyboardSize != 0 && self.keyboardSize != Int(newHeight) { self.onAnyKeyboardSizeChange(newHeight: newHeight) }
+	}
 
-  override func viewDidLoad() {
-    super.viewDidLoad()
-    webView.translatesAutoresizingMaskIntoConstraints = false
-    webView.leftAnchor.constraint(equalTo: self.view.leftAnchor).isActive = true
-    webView.topAnchor.constraint(equalTo: self.view.topAnchor).isActive = true
-    webView.rightAnchor.constraint(equalTo: self.view.rightAnchor).isActive = true
-    webView.bottomAnchor.constraint(equalTo: self.view.bottomAnchor).isActive = true
+	private func onAnyKeyboardSizeChange(newHeight: CGFloat) {
+		self.keyboardSize = Int(newHeight)
+		Task { try await MobileFacadeSendDispatcher(transport: self.bridge).keyboardSizeChanged(self.keyboardSize) }
+	}
 
-    let theme = self.themeManager.currentThemeWithFallback
-    self.applyTheme(theme)
-    self.alarmManager.initialize()
+	func onApplicationDidEnterBackground() {
+		// When the user leaves the app we want to perform "incremental_vacuum" on the offline database.
+		// We perform vacuum once the app is put into background instead of when the app is terminated as on iOS
+		// we do not have enough time before the app is terminated by the system.
+		Task { try await self.sqlCipherFacade.vaccumDb() }
+	}
 
+	func onApplicationWillTerminate() { Task { try await self.sqlCipherFacade.closeDb() } }
 
-    Task { @MainActor in
-      let location = UserDefaults.standard.string(forKey: "webConfigLocation")
-      if location != "assetOrigin" {
-        await self.migrateCredentialsFromOldOrigin()
-      }
+	override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+		super.traitCollectionDidChange(previousTraitCollection)
+		Task.detached { @MainActor in
+			self.applyTheme(self.themeManager.currentThemeWithFallback)
+			try? await self.bridge.commonNativeFacade.updateTheme()
+		}
+	}
 
-      self._loadMainPage(params: [:])
-    }
-  }
+	override func viewDidLoad() {
+		super.viewDidLoad()
+		webView.translatesAutoresizingMaskIntoConstraints = false
+		webView.leftAnchor.constraint(equalTo: self.view.leftAnchor).isActive = true
+		webView.topAnchor.constraint(equalTo: self.view.topAnchor).isActive = true
+		webView.rightAnchor.constraint(equalTo: self.view.rightAnchor).isActive = true
+		webView.bottomAnchor.constraint(equalTo: self.view.bottomAnchor).isActive = true
 
-  private func migrateCredentialsFromOldOrigin() async {
-    defer {
-      UserDefaults.standard.set("assetOrigin", forKey: "webConfigLocation")
-    }
-    TUTSLog("Migrating webView data")
-    do {
-      let oldConfig = try await self.executeJavascriptForResult(
-        js: "localStorage.getItem('tutanotaConfig') ? btoa(localStorage.getItem('tutanotaConfig')) : 'null'",
-        withUrl: "file:///dummy.html"
-      )
-      if oldConfig == "null" {
-        TUTSLog("Nothing to migrate")
-        return
-      }
+		let theme = self.themeManager.currentThemeWithFallback
+		self.applyTheme(theme)
+		self.notificationsHandler.initialize()
 
-      TUTSLog("Deleting old webView data")
-      let dataRecords = await WKWebsiteDataStore.default().dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
-      await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: dataRecords)
+		Task { @MainActor in self._loadMainPage(params: [:]) }
+	}
 
-      TUTSLog("Setting new webView config")
+	private func _loadMainPage(params: [String: String]) {
+		let fileUrl = self.getAssetUrl()
 
-      let _ = try await self.executeJavascriptForResult(
-        // Must return something otherwise webkit gets sad
-        js: "localStorage.setItem('tutanotaConfig', atob('\(oldConfig)')); '42'",
-        withUrl: "asset://app/polyfill.js"
-      )
-      TUTSLog("WebView config migrated")
-    } catch {
-      TUTSLog("Error during webView data migration \(error)")
-    }
-  }
+		var mutableParams = params
+		if let theme = self.themeManager.currentTheme {
+			let encodedTheme = self.dictToJson(dictionary: theme)
+			mutableParams["theme"] = encodedTheme
+		}
+		mutableParams["platformId"] = "ios"
+		let queryParams = NSURLQueryItem.from(dict: mutableParams)
+		var components = URLComponents.init(url: fileUrl, resolvingAgainstBaseURL: false)!
+		components.queryItems = queryParams
 
-  private func executeJavascriptForResult(js: String, withUrl url: String) async throws -> String {
-    return try await withCheckedThrowingContinuation { cont in
-      let webViewConfig = WKWebViewConfiguration()
-      webViewConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-      let folderPath: String = (self.appUrl() as NSURL).deletingLastPathComponent!.path
-      webViewConfig.setURLSchemeHandler(AssetSchemeHandler(folderPath: folderPath), forURLScheme: "asset")
+		let url = components.url!
+		webView.load(URLRequest(url: url))
+	}
 
-      let migrationWebView = WKWebView(frame: CGRect.zero, configuration: webViewConfig)
+	private func dictToJson(dictionary: [String: String]) -> String { try! String(data: JSONEncoder().encode(dictionary), encoding: .utf8)! }
 
-      let littleDelegate = LittleNavigationDelegate()
-      littleDelegate.action = {
-        Task {
-          defer {
-            littleDelegate.action = nil
-          }
+	private func appUrl() -> URL {
+		// this var is stored in Info.plist and possibly manipulated by the build schemes:
+		// Product > Scheme > Manage Schemes in xcode.
+		// default path points to the dist build of the web app,
+		// both schemes modify it to point at the respective build before building the app
+		let pagePath: String = Bundle.main.infoDictionary!["TutanotaApplicationPath"] as! String
+		let path = Bundle.main.path(forResource: pagePath + "index-app", ofType: "html")
+		if path == nil { return Bundle.main.resourceURL! } else { return NSURL.fileURL(withPath: path!) }
+	}
 
-          let result: Any
-          do {
-            result = try await migrationWebView.evaluateJavaScript(js)
-          } catch {
-            cont.resume(throwing: error)
-            return
-          }
-          if let result = result as? String {
-            cont.resume(returning: result)
-          } else {
-            cont.resume(throwing: TUTErrorFactory.createError("Could not execute JS"))
-          }
-        }
-      }
-      migrationWebView.navigationDelegate = littleDelegate
-      migrationWebView.loadHTMLString("", baseURL: URL(string: url))
-    }
-  }
+	private func getAssetUrl() -> URL { URL(string: "asset://app/index-app.html")! }
 
-  private func _loadMainPage(params: [String : String]) {
-    let fileUrl = self.getAssetUrl()
+	func applyTheme(_ theme: [String: String]) {
+		let contentBgString = theme["content_bg"]!
+		let contentBg = UIColor(hex: contentBgString)!
+		self.isDarkTheme = !contentBg.isLight()
+		self.view.backgroundColor = contentBg
+		self.setNeedsStatusBarAppearanceUpdate()
+	}
 
-    var mutableParams = params
-    if let theme = self.themeManager.currentTheme {
-      let encodedTheme = self.dictToJson(dictionary: theme)
-      mutableParams["theme"] = encodedTheme
-    }
-    mutableParams["platformId"] = "ios"
-    let queryParams = NSURLQueryItem.from(dict: mutableParams)
-    var components = URLComponents.init(url: fileUrl, resolvingAgainstBaseURL: false)!
-    components.queryItems = queryParams
+	func scrollViewDidScroll(_ scrollView: UIScrollView) {
+		// disable scrolling of the web view to avoid that the keyboard moves the body out of the screen
+		scrollView.contentOffset = CGPoint.zero
+	}
 
-    let url = components.url!
-    webView.load(URLRequest(url: url))
-  }
+	/// use the URL we were called with to retrieve the information about shared items
+	/// from the app group storage
+	private func getSharingInfo(url: URL) async -> SharingInfo? {
+		guard let infoLocation = url.host else { return nil }
+		return readSharingInfo(infoLocation: infoLocation)
+	}
 
-  private func dictToJson(dictionary: [String : String]) -> String {
-    return try! String(data: JSONEncoder().encode(dictionary), encoding: .utf8)!
-  }
+	private func getInteropInfo(url: URL) async -> URLQueryItem? {
+		guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
 
-  private func appUrl() -> URL {
-    // this var is stored in Info.plist and possibly manipulated by the build schemes:
-    // Product > Scheme > Manage Schemes in xcode.
-    // default path points to the dist build of the web app,
-    // both schemes modify it to point at the respective build before building the app
-    let pagePath: String = Bundle.main.infoDictionary!["TutanotaApplicationPath"] as! String
-    let path = Bundle.main.path(forResource: pagePath + "index-app", ofType: "html")
-    if path == nil {
-      return Bundle.main.resourceURL!
-    } else {
-      return NSURL.fileURL(withPath: path!)
-    }
-  }
+		return components.queryItems?.first(where: { $0.name == OPEN_CONTACT_EDITOR_CONTACT_ID || $0.name == OPEN_SETTINGS })
+	}
 
-  private func getAssetUrl() -> URL {
-    return URL(string: "asset://app/index-app.html")!
-  }
+	func handleShare(_ url: URL) async throws {
+		guard let info = await getSharingInfo(url: url) else {
+			TUTSLog("unable to get sharingInfo from url: \(url)")
+			return
+		}
 
-  func applyTheme(_ theme: [String : String]) {
-    let contentBgString = theme["content_bg"]!
-    let contentBg = UIColor(hex: contentBgString)!
-    self.isDarkTheme = !contentBg.isLight()
-    self.view.backgroundColor = contentBg
-    self.setNeedsStatusBarAppearanceUpdate()
-  }
+		do { try await self.bridge.commonNativeFacade.createMailEditor(info.fileUrls.map { $0.path }, info.text, [], "", "") } catch {
+			TUTSLog("failed to open mail editor to share: \(error)")
+			try FileUtils.deleteSharedStorage(subDir: info.identifier)
+		}
+	}
 
-  func scrollViewDidScroll(_ scrollView: UIScrollView) {
-    // disable scrolling of the web view to avoid that the keyboard moves the body out of the screen
-    scrollView.contentOffset = CGPoint.zero
-  }
+	func handleInterop(_ url: URL) async throws {
+		guard let info = await getInteropInfo(url: url) else {
+			TUTSLog("unable to get sharingInfo from url: \(url)")
+			return
+		}
 
-  /// use the URL we were called with to retrieve the information about shared items
-  /// from the app group storage
-  private func getSharingInfo(url: URL) async -> SharingInfo? {
-    guard let infoLocation = url.host else {
-      return nil
-    }
-    return readSharingInfo(infoLocation: infoLocation)
-  }
+		switch info.name {
+		case OPEN_CONTACT_EDITOR_CONTACT_ID:
+			do { try await self.bridge.commonNativeFacade.openContactEditor(info.value!) } catch { TUTSLog("failed to open contact editor: \(error)") }
+		case OPEN_SETTINGS: do { try await self.bridge.commonNativeFacade.openSettings(info.value!) } catch { TUTSLog("failed to open settings: \(error)") }
+		default: throw TutanotaError(message: "Invalid interop operation")
+		}
+	}
 
-  func handleShare(_ url: URL) async throws -> Void {
-    guard let info = await getSharingInfo(url: url) else {
-      TUTSLog("unable to get sharingInfo from url: \(url)")
-      return
-    }
+	func handleOpenNotification(userId: String, address: String, mailId: (String, String)) {
+		// Will be formatted as "<domain>/mail<requestedPath>" in TypeScript code
+		//
+		// requestedPath is /listId/elementId
+		let mailid = "\(mailId.0),\(mailId.1)"
+		let requestedPath = "?mail=\(mailid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!)"
 
-    do {
-      try await self.bridge.commonNativeFacade.createMailEditor(
-        info.fileUrls.map{$0.path},
-        info.text,
-        [],
-        "",
-        ""
-      )
-    } catch {
-      TUTSLog("failed to open mail editor to share: \(error)")
-      try FileUtils.deleteSharedStorage(subDir: info.identifier)
-    }
-  }
+		Task(priority: .userInitiated) {
+			do { try await self.bridge.commonNativeFacade.openMailBox(userId, address, requestedPath) } catch {
+				TUTSLog("Failed to open mail: \(requestedPath) from notification: \(error)")
+			}
+		}
+	}
 
-  override var preferredStatusBarStyle: UIStatusBarStyle {
-    if self.isDarkTheme {
-      return .lightContent
-    } else {
-      return .darkContent
-    }
-  }
+	override var preferredStatusBarStyle: UIStatusBarStyle { if self.isDarkTheme { return .lightContent } else { return .darkContent } }
 }
 
-
 // Remove when webView config migration is removed
-fileprivate class LittleNavigationDelegate : NSObject, WKNavigationDelegate {
-  var action: (() -> Void)? = nil
+private class LittleNavigationDelegate: NSObject, WKNavigationDelegate {
+	var action: (() -> Void)?
 
-  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    if let action = self.action {
-      action()
-    }
-  }
+	func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if let action = self.action { action() } }
 
-  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-    TUTSLog("FAILED NAVIGATION >{")
-  }
+	func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { TUTSLog("FAILED NAVIGATION >{") }
 }
 
 extension ViewController: ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        return view.window!
-    }
+	func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor { view.window! }
 }

@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import type {
 	ElementDataDbRow,
 	ElementDataSurrogate,
@@ -9,7 +9,7 @@ import type {
 	IndexUpdate,
 	SearchIndexEntry,
 	SearchIndexMetaDataRow,
-} from "../../../../../src/api/worker/search/SearchTypes.js"
+} from "../../../../../src/common/api/worker/search/SearchTypes.js"
 import {
 	_createNewIndexUpdate,
 	decryptIndexKey,
@@ -20,23 +20,22 @@ import {
 	encryptMetaData,
 	getIdFromEncSearchIndexEntry,
 	typeRefToTypeInfo,
-} from "../../../../../src/api/worker/search/IndexUtils.js"
+} from "../../../../../src/common/api/worker/search/IndexUtils.js"
 import { base64ToUint8Array, concat, defer, downcast, neverNull, noOp, PromisableWrapper, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
 import { spy } from "@tutao/tutanota-test-utils"
-import { MailTypeRef } from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { DbTransaction } from "../../../../../src/api/worker/search/DbFacade.js"
-import { appendBinaryBlocks } from "../../../../../src/api/worker/search/SearchIndexEncoding.js"
-import { createEntityUpdate } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { EventQueue } from "../../../../../src/api/worker/search/EventQueue.js"
-import { CancelledError } from "../../../../../src/api/common/error/CancelledError.js"
+import { ContactTypeRef, MailTypeRef } from "../../../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { DbTransaction } from "../../../../../src/common/api/worker/search/DbFacade.js"
+import { appendBinaryBlocks } from "../../../../../src/common/api/worker/search/SearchIndexEncoding.js"
+import { EntityUpdateTypeRef } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
+import { EventQueue } from "../../../../../src/common/api/worker/EventQueue.js"
+import { CancelledError } from "../../../../../src/common/api/common/error/CancelledError.js"
 import { createSearchIndexDbStub, DbStub, DbStubTransaction } from "./DbStub.js"
-import { IndexerCore } from "../../../../../src/api/worker/search/IndexerCore.js"
-import { ContactTypeRef, createContact } from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { elementIdPart, generatedIdToTimestamp, listIdPart, timestampToGeneratedId } from "../../../../../src/api/common/utils/EntityUtils.js"
-import { ElementDataOS, GroupDataOS, SearchIndexMetaDataOS, SearchIndexOS } from "../../../../../src/api/worker/search/Indexer.js"
-import { makeCore } from "../../../TestUtils.js"
-import { aes256Decrypt, aes256Encrypt, aes256RandomKey, fixedIv, IV_BYTE_LENGTH, random } from "@tutao/tutanota-crypto"
-import { resolveTypeReference } from "../../../../../src/api/common/EntityFunctions.js"
+import { IndexerCore } from "../../../../../src/mail-app/workerUtils/index/IndexerCore.js"
+import { elementIdPart, generatedIdToTimestamp, listIdPart, timestampToGeneratedId } from "../../../../../src/common/api/common/utils/EntityUtils.js"
+import { createTestEntity, makeCore } from "../../../TestUtils.js"
+import { Aes256Key, aes256RandomKey, aesEncrypt, fixedIv, IV_BYTE_LENGTH, random, unauthenticatedAesDecrypt } from "@tutao/tutanota-crypto"
+import { resolveTypeReference } from "../../../../../src/common/api/common/EntityFunctions.js"
+import { ElementDataOS, GroupDataOS, SearchIndexMetaDataOS, SearchIndexOS } from "../../../../../src/common/api/worker/search/IndexTables.js"
 
 const mailTypeInfo = typeRefToTypeInfo(MailTypeRef)
 const contactTypeInfo = typeRefToTypeInfo(ContactTypeRef)
@@ -64,7 +63,7 @@ function compareBinaryBlocks(actual: Uint8Array, expected: Uint8Array) {
 o.spec("IndexerCore test", () => {
 	o("createIndexEntriesForAttributes", async function () {
 		let core = makeCore()
-		let contact = createContact()
+		let contact = createTestEntity(ContactTypeRef)
 		contact._id = ["", "L-dNNLe----0"]
 		contact.firstName = "Max Tim"
 		contact.lastName = "Meier" // not indexed
@@ -473,7 +472,7 @@ o.spec("IndexerCore test", () => {
 		o(key).equals(encInstanceId)
 		const [listIdValue, encRowsValue, ownerGroupValue] = value
 		o(listIdValue).equals(listId)
-		o(Array.from(aes256Decrypt(core.db.key, encRowsValue, true, false))).deepEquals(Array.from(new Uint8Array([searchIndexRowKey])))
+		o(Array.from(unauthenticatedAesDecrypt(core.db.key, encRowsValue, true))).deepEquals(Array.from(new Uint8Array([searchIndexRowKey])))
 		o(ownerGroupValue).equals(groupId)
 	})
 	o.spec("writeIndexUpdate _insertNewIndexEntries ", function () {
@@ -499,7 +498,7 @@ o.spec("IndexerCore test", () => {
 				},
 			])
 			await core._insertNewIndexEntries(indexUpdate, transaction)
-			o(Array.from(transaction.getSync(SearchIndexOS, 1))).deepEquals(Array.from(appendBinaryBlocks([entry])))
+			o(Array.from(transaction.getSync<Uint8Array>(SearchIndexOS, 1))).deepEquals(Array.from(appendBinaryBlocks([entry])))
 			const decodedInsertedMeta = decryptMetaData(core.db.key, transaction.getSync(SearchIndexMetaDataOS, 1))
 			o(decodedInsertedMeta).deepEquals({
 				id: 1,
@@ -545,7 +544,7 @@ o.spec("IndexerCore test", () => {
 			transaction.put(SearchIndexMetaDataOS, null, encryptMetaData(core.db.key, searchIndexMeta))
 			transaction.put(SearchIndexOS, searchIndexKey, existingBlock)
 			await core._insertNewIndexEntries(indexUpdate, transaction)
-			o(Array.from(transaction.getSync(SearchIndexOS, searchIndexKey))).deepEquals(Array.from(appendBinaryBlocks([newEntry], existingBlock)))
+			o(Array.from(transaction.getSync<Uint8Array>(SearchIndexOS, searchIndexKey))).deepEquals(Array.from(appendBinaryBlocks([newEntry], existingBlock)))
 			const expectedMeta = Object.assign({}, searchIndexMeta, {
 				rows: [
 					{
@@ -591,7 +590,7 @@ o.spec("IndexerCore test", () => {
 			await core._insertNewIndexEntries(indexUpdate, transaction)
 			const searchIndexContent = dbStub.getObjectStore(SearchIndexOS).content[newKey]
 			o(Array.from(searchIndexContent)).deepEquals(Array.from(appendBinaryBlocks(newEntries.slice(0, 150).map((e) => e.entry))))
-			o(Array.from(transaction.getSync(SearchIndexOS, 1))).deepEquals(
+			o(Array.from(transaction.getSync<Uint8Array>(SearchIndexOS, 1))).deepEquals(
 				Array.from(
 					appendBinaryBlocks(
 						newEntries.slice(150).map((e) => e.entry),
@@ -639,7 +638,7 @@ o.spec("IndexerCore test", () => {
 			transaction.put(SearchIndexOS, 1, existingRow)
 			transaction.put(SearchIndexMetaDataOS, null, encryptMetaData(core.db.key, searchIndexMeta))
 			await core._insertNewIndexEntries(indexUpdate, transaction)
-			o(Array.from(transaction.getSync(SearchIndexOS, 1))).deepEquals(
+			o(Array.from(transaction.getSync<Uint8Array>(SearchIndexOS, 1))).deepEquals(
 				Array.from(
 					appendBinaryBlocks(
 						newEntries.map((e) => e.entry),
@@ -677,7 +676,7 @@ o.spec("IndexerCore test", () => {
 			transaction.put(SearchIndexOS, 1, existingRow)
 			transaction.put(SearchIndexMetaDataOS, null, encryptMetaData(core.db.key, searchIndexMeta))
 			await core._insertNewIndexEntries(indexUpdate, transaction)
-			o(Array.from(transaction.getSync(SearchIndexOS, 1))).deepEquals(
+			o(Array.from(transaction.getSync<Uint8Array>(SearchIndexOS, 1))).deepEquals(
 				Array.from(
 					appendBinaryBlocks(
 						newEntries.map((e) => e.entry),
@@ -910,12 +909,13 @@ o.spec("IndexerCore test", () => {
 			o(decryptMetaData(core.db.key, transaction.getSync(SearchIndexMetaDataOS, searchIndexMeta.id))).deepEquals(searchIndexMeta)
 		})
 	})
-	o("writeIndexUpdate _updateGroupDataBatchId abort in case batch has been indexed already", function (done) {
+	o("writeIndexUpdate _updateGroupDataBatchId abort in case batch has been indexed already", async function () {
 		let groupId = "my-group"
 
 		let indexUpdate = _createNewIndexUpdate(mailTypeInfo)
 
 		const batchId = "last-batch-id"
+		const deferred = defer<void>()
 		let transaction: any = {
 			get: (os, key) => {
 				o(os).equals(GroupDataOS)
@@ -927,18 +927,21 @@ o.spec("IndexerCore test", () => {
 			},
 			aborted: true,
 			abort: () => {
-				done()
+				deferred.resolve()
 			},
 		}
 		const core = makeCore()
 
 		core._updateGroupDataBatchId(groupId, batchId, transaction)
+		await deferred.promise
 	})
-	o("writeIndexUpdate _updateGroupDataBatchId", function (done) {
+
+	o("writeIndexUpdate _updateGroupDataBatchId", async function () {
 		let groupId = "my-group"
 
 		let indexUpdate = _createNewIndexUpdate(mailTypeInfo)
 
+		const deferred = defer<void>()
 		const batchId = "2"
 		let transaction: any = {
 			get: (os, key) => {
@@ -958,13 +961,15 @@ o.spec("IndexerCore test", () => {
 						lastBatchIds: ["4", "3", "2", "1"],
 					}),
 				)
-				done()
+				deferred.resolve()
 			},
 		}
 		const core = makeCore()
 
 		core._updateGroupDataBatchId(groupId, batchId, transaction)
+		await deferred.promise
 	})
+
 	o("writeIndexUpdate", async function () {
 		let groupId = "my-group"
 
@@ -984,12 +989,11 @@ o.spec("IndexerCore test", () => {
 				transaction,
 			},
 			(mocked) => {
-				// @ts-ignore
-				mocked._moveIndexedInstance = o.spy(() => PromisableWrapper.from())
-				mocked._deleteIndexedInstance = o.spy()
-				mocked._insertNewElementData = o.spy(() => Promise.resolve())
-				mocked._insertNewIndexEntries = o.spy(() => Promise.resolve(encWordToMetaRow))
-				mocked._updateGroupDataIndexTimestamp = o.spy()
+				mocked._moveIndexedInstance = spy(() => PromisableWrapper.from(undefined))
+				mocked._deleteIndexedInstance = spy()
+				mocked._insertNewElementData = spy(() => Promise.resolve())
+				mocked._insertNewIndexEntries = spy(() => Promise.resolve(encWordToMetaRow))
+				mocked._updateGroupDataIndexTimestamp = spy()
 			},
 		)
 		const groupUpdate = [
@@ -999,28 +1003,19 @@ o.spec("IndexerCore test", () => {
 			},
 		]
 		await core.writeIndexUpdate(groupUpdate, indexUpdate)
-		// @ts-ignore
 		o(core._moveIndexedInstance.callCount).equals(1)
-		// @ts-ignore
 		o(core._moveIndexedInstance.args).deepEquals([indexUpdate, transaction])
-		// @ts-ignore
 		o(core._deleteIndexedInstance.callCount).equals(1)
-		// @ts-ignore
 		o(core._deleteIndexedInstance.args).deepEquals([indexUpdate, transaction])
-		// @ts-ignore
 		o(core._insertNewElementData.callCount).equals(1)
-		// @ts-ignore
 		o(core._insertNewElementData.args).deepEquals([indexUpdate, transaction, encWordToMetaRow])
-		// @ts-ignore
 		o(core._insertNewIndexEntries.callCount).equals(1)
-		// @ts-ignore
 		o(core._insertNewIndexEntries.args).deepEquals([indexUpdate, transaction])
-		// @ts-ignore
 		o(core._updateGroupDataIndexTimestamp.callCount).equals(1)
-		// @ts-ignore
 		o(core._updateGroupDataIndexTimestamp.args).deepEquals([groupUpdate, transaction])
 		o(waitForTransaction).equals(true)
 	})
+
 	o("processDeleted", async function () {
 		const groupId = "my-group"
 
@@ -1028,7 +1023,7 @@ o.spec("IndexerCore test", () => {
 
 		const instanceId = "L-dNNLe----1"
 		const instanceIdTimestamp = generatedIdToTimestamp(instanceId)
-		const event = createEntityUpdate()
+		const event = createTestEntity(EntityUpdateTypeRef)
 		event.application = MailTypeRef.app
 		event.type = MailTypeRef.type
 		const metaRowId = 3
@@ -1048,7 +1043,7 @@ o.spec("IndexerCore test", () => {
 		const listId = "list-id"
 		const elementData: ElementDataDbRow = [
 			listId,
-			aes256Encrypt(core.db.key, new Uint8Array([metaRowId, anotherMetaRowId]), random.generateRandomData(IV_BYTE_LENGTH), true, false),
+			aesEncrypt(core.db.key, new Uint8Array([metaRowId, anotherMetaRowId]), random.generateRandomData(IV_BYTE_LENGTH), true),
 			groupId,
 		]
 		const otherId = new Uint8Array(16).fill(88)
@@ -1091,7 +1086,7 @@ o.spec("IndexerCore test", () => {
 		let indexUpdate = _createNewIndexUpdate(mailTypeInfo)
 
 		let instanceId = "123"
-		let event = createEntityUpdate()
+		let event = createTestEntity(EntityUpdateTypeRef)
 		event.instanceId = instanceId
 		event.application = MailTypeRef.app
 		event.type = MailTypeRef.type

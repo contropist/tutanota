@@ -1,27 +1,26 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
+	ContactAddressTypeRef,
 	ContactListTypeRef,
+	ContactMailAddressTypeRef,
+	ContactPhoneNumberTypeRef,
+	ContactSocialIdTypeRef,
 	ContactTypeRef,
-	createContact,
-	createContactAddress,
-	createContactList,
-	createContactMailAddress,
-	createContactPhoneNumber,
-	createContactSocialId,
-} from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { ContactIndexer } from "../../../../../src/api/worker/search/ContactIndexer.js"
-import { NotAuthorizedError, NotFoundError } from "../../../../../src/api/common/error/RestError.js"
-import { DbTransaction } from "../../../../../src/api/worker/search/DbFacade.js"
-import { FULL_INDEXED_TIMESTAMP, NOTHING_INDEXED_TIMESTAMP, OperationType } from "../../../../../src/api/common/TutanotaConstants.js"
-import { _createNewIndexUpdate, encryptIndexKeyBase64, typeRefToTypeInfo } from "../../../../../src/api/worker/search/IndexUtils.js"
-import type { EntityUpdate } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { createEntityUpdate } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { makeCore } from "../../../TestUtils.js"
+} from "../../../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { ContactIndexer } from "../../../../../src/mail-app/workerUtils/index/ContactIndexer.js"
+import { NotAuthorizedError, NotFoundError } from "../../../../../src/common/api/common/error/RestError.js"
+import { DbTransaction } from "../../../../../src/common/api/worker/search/DbFacade.js"
+import { FULL_INDEXED_TIMESTAMP, NOTHING_INDEXED_TIMESTAMP, OperationType } from "../../../../../src/common/api/common/TutanotaConstants.js"
+import { _createNewIndexUpdate, encryptIndexKeyBase64, typeRefToTypeInfo } from "../../../../../src/common/api/worker/search/IndexUtils.js"
+import type { EntityUpdate } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
+import { EntityUpdateTypeRef } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
+import { createTestEntity, makeCore } from "../../../TestUtils.js"
 import { downcast } from "@tutao/tutanota-utils"
-import { isSameId } from "../../../../../src/api/common/utils/EntityUtils.js"
-import { GroupDataOS } from "../../../../../src/api/worker/search/Indexer.js"
+import { isSameId } from "../../../../../src/common/api/common/utils/EntityUtils.js"
 import { fixedIv } from "@tutao/tutanota-crypto"
-import { resolveTypeReference } from "../../../../../src/api/common/EntityFunctions.js"
+import { resolveTypeReference } from "../../../../../src/common/api/common/EntityFunctions.js"
+import { GroupDataOS } from "../../../../../src/common/api/worker/search/IndexTables.js"
+import { spy } from "@tutao/tutanota-test-utils"
 
 const dbMock: any = { iv: fixedIv }
 const contactTypeInfo = typeRefToTypeInfo(ContactTypeRef)
@@ -30,12 +29,12 @@ o.spec("ContactIndexer test", () => {
 	let suggestionFacadeMock
 	o.beforeEach(function () {
 		suggestionFacadeMock = {} as any
-		suggestionFacadeMock.addSuggestions = o.spy()
-		suggestionFacadeMock.store = o.spy(() => Promise.resolve())
+		suggestionFacadeMock.addSuggestions = spy()
+		suggestionFacadeMock.store = spy(() => Promise.resolve())
 	})
 
 	o("createContactIndexEntries without entries", function () {
-		let c = createContact()
+		let c = createTestEntity(ContactTypeRef)
 		let contact = new ContactIndexer(makeCore(), null as any, null as any, suggestionFacadeMock)
 		let keyToIndexEntries = contact.createContactIndexEntries(c)
 		o(suggestionFacadeMock.addSuggestions.callCount).equals(1)
@@ -44,7 +43,7 @@ o.spec("ContactIndexer test", () => {
 	})
 
 	o("createContactIndexEntries with one entry", function () {
-		let c = createContact()
+		let c = createTestEntity(ContactTypeRef)
 		c.company = "test"
 		let contact = new ContactIndexer(makeCore(), null as any, null as any, suggestionFacadeMock)
 		let keyToIndexEntries = contact.createContactIndexEntries(c)
@@ -53,26 +52,26 @@ o.spec("ContactIndexer test", () => {
 	})
 
 	o("createContactIndexEntries", async function () {
-		let core = { createIndexEntriesForAttributes: o.spy() } as any
+		let core = { createIndexEntriesForAttributes: spy() } as any
 		const contactIndexer = new ContactIndexer(core, dbMock, null as any, suggestionFacadeMock)
 
-		let addresses = [createContactAddress(), createContactAddress()]
+		let addresses = [createTestEntity(ContactAddressTypeRef), createTestEntity(ContactAddressTypeRef)]
 		addresses[0].address = "A0"
 		addresses[1].address = "A1"
 
-		let mailAddresses = [createContactMailAddress(), createContactMailAddress()]
+		let mailAddresses = [createTestEntity(ContactMailAddressTypeRef), createTestEntity(ContactMailAddressTypeRef)]
 		mailAddresses[0].address = "MA0"
 		mailAddresses[1].address = "MA1"
 
-		let phoneNumbers = [createContactPhoneNumber(), createContactPhoneNumber()]
+		let phoneNumbers = [createTestEntity(ContactPhoneNumberTypeRef), createTestEntity(ContactPhoneNumberTypeRef)]
 		phoneNumbers[0].number = "PN0"
 		phoneNumbers[1].number = "PN1"
 
-		let socialIds = [createContactSocialId(), createContactSocialId()]
+		let socialIds = [createTestEntity(ContactSocialIdTypeRef), createTestEntity(ContactSocialIdTypeRef)]
 		socialIds[0].socialId = "S0"
 		socialIds[1].socialId = "S1"
 
-		let c = createContact()
+		let c = createTestEntity(ContactTypeRef)
 		c.firstName = "FN"
 		c.lastName = "LN"
 		c.nickname = "NN"
@@ -110,12 +109,12 @@ o.spec("ContactIndexer test", () => {
 	})
 
 	o("processNewContact", async function () {
-		let contact = createContact()
+		let contact = createTestEntity(ContactTypeRef)
 		let keyToIndexEntries = new Map()
 
 		let indexer = { createIndexEntriesForAttributes: () => keyToIndexEntries } as any
 		let entity = {
-			load: o.spy(() => Promise.resolve(contact)),
+			load: spy(() => Promise.resolve(contact)),
 		} as any
 
 		const contactIndexer = new ContactIndexer(indexer, dbMock, entity, suggestionFacadeMock)
@@ -162,7 +161,7 @@ o.spec("ContactIndexer test", () => {
 		})
 	})
 
-	o("processNewContact passes other Errors", function () {
+	o("processNewContact passes other Errors", async function () {
 		let core = {
 			createIndexEntriesForAttributes: () => {},
 		} as any
@@ -171,7 +170,7 @@ o.spec("ContactIndexer test", () => {
 		} as any
 		const contactIndexer = new ContactIndexer(core, dbMock, entity, suggestionFacadeMock)
 		let event: EntityUpdate = { instanceListId: "lid", instanceId: "eid" } as any
-		return contactIndexer.processNewContact(event).catch((e) => {
+		await contactIndexer.processNewContact(event).catch((e) => {
 			o(suggestionFacadeMock.addSuggestions.callCount).equals(0)
 		})
 	})
@@ -188,15 +187,15 @@ o.spec("ContactIndexer test", () => {
 		})
 
 		const core = makeCore({ transaction }, (mocked) => {
-			mocked.writeIndexUpdate = o.spy()
+			mocked.writeIndexUpdate = spy()
 		})
 
 		let userGroupId = "userGroupId"
-		let contactList = createContactList()
+		let contactList = createTestEntity(ContactListTypeRef)
 		contactList._ownerGroup = "ownerGroupId"
 		contactList.contacts = "contactListId"
 
-		let contacts = [createContact(), createContact()]
+		let contacts = [createTestEntity(ContactTypeRef), createTestEntity(ContactTypeRef)]
 		contacts[0]._id = [contactList.contacts, "c0"]
 		contacts[0]._ownerGroup = "c0owner"
 		contacts[1]._id = [contactList.contacts, "c1"]
@@ -233,11 +232,11 @@ o.spec("ContactIndexer test", () => {
 	})
 	o("processEntityEvents new contact", async function () {
 		const core = makeCore({}, (mocked) => {
-			mocked.writeIndexUpdate = o.spy()
-			mocked._processDeleted = o.spy()
+			mocked.writeIndexUpdate = spy()
+			mocked._processDeleted = spy()
 		})
 
-		let contact = createContact()
+		let contact = createTestEntity(ContactTypeRef)
 		contact._id = ["contact-list", "L-dNNLe----0"]
 		let entity: any = {
 			load: (type, id) => {
@@ -259,11 +258,11 @@ o.spec("ContactIndexer test", () => {
 
 	o("processEntityEvents update contact", function () {
 		const core = makeCore({}, (mocked) => {
-			mocked.writeIndexUpdate = o.spy()
-			mocked._processDeleted = o.spy()
+			mocked.writeIndexUpdate = spy()
+			mocked._processDeleted = spy()
 		})
 
-		let contact = createContact()
+		let contact = createTestEntity(ContactTypeRef)
 		contact._id = ["contact-list", "L-dNNLe----0"]
 		let entity: any = {
 			load: (type, id) => {
@@ -279,20 +278,18 @@ o.spec("ContactIndexer test", () => {
 			// nothing changed
 			o(indexUpdate.create.encInstanceIdToElementData.size).equals(1)
 			o(indexUpdate.move.length).equals(0)
-			// @ts-ignore
 			o(core._processDeleted.callCount).equals(1)
-			// @ts-ignore
 			o(core._processDeleted.args).deepEquals([events[0], indexUpdate])
 		})
 	})
 
 	o("processEntityEvents delete contact", function () {
 		const core = makeCore({}, (mocked) => {
-			mocked.writeIndexUpdate = o.spy()
-			mocked._processDeleted = o.spy()
+			mocked.writeIndexUpdate = spy()
+			mocked._processDeleted = spy()
 		})
 
-		let contact = createContact()
+		let contact = createTestEntity(ContactTypeRef)
 		contact._id = ["contact-list", "1"]
 		let entity: any = {
 			load: (type, id) => {
@@ -308,16 +305,14 @@ o.spec("ContactIndexer test", () => {
 			// nothing changed
 			o(indexUpdate.create.encInstanceIdToElementData.size).equals(0)
 			o(indexUpdate.move.length).equals(0)
-			// @ts-ignore
 			o(core._processDeleted.callCount).equals(1)
-			// @ts-ignore
 			o(core._processDeleted.args).deepEquals([events[0], indexUpdate])
 		})
 	})
 })
 
 function createUpdate(type: OperationType, listId: Id, id: Id) {
-	let update = createEntityUpdate()
+	let update = createTestEntity(EntityUpdateTypeRef)
 	update.operation = type
 	update.instanceListId = listId
 	update.instanceId = id

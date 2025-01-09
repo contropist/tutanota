@@ -1,23 +1,21 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import n from "../nodemocker.js"
 import { defer, DeferredObject, delay, downcast } from "@tutao/tutanota-utils"
-import { ApplicationWindow } from "../../../src/desktop/ApplicationWindow.js"
+import { ApplicationWindow } from "../../../src/common/desktop/ApplicationWindow.js"
 import type { NativeImage } from "electron"
-import type { Theme, ThemeId } from "../../../src/gui/theme.js"
-import { WindowManager } from "../../../src/desktop/DesktopWindowManager.js"
-import { LocalShortcutManager } from "../../../src/desktop/electron-localshortcut/LocalShortcut.js"
+import type { Theme, ThemeId } from "../../../src/common/gui/theme.js"
+import { WindowManager } from "../../../src/common/desktop/DesktopWindowManager.js"
+import { LocalShortcutManager } from "../../../src/common/desktop/electron-localshortcut/LocalShortcut.js"
 import { matchers, object, when } from "testdouble"
-import { verify } from "@tutao/tutanota-test-utils"
-import { ThemeFacade } from "../../../src/native/common/generatedipc/ThemeFacade.js"
-import { DesktopThemeFacade } from "../../../src/desktop/DesktopThemeFacade.js"
-import { RemoteBridge, SendingFacades } from "../../../src/desktop/ipc/RemoteBridge.js"
-import { OfflineDbManager } from "../../../src/desktop/db/PerWindowSqlCipherFacade.js"
+import { spy, verify } from "@tutao/tutanota-test-utils"
+import { ThemeFacade } from "../../../src/common/native/common/generatedipc/ThemeFacade.js"
+import { DesktopThemeFacade } from "../../../src/common/desktop/DesktopThemeFacade.js"
+import { RemoteBridge, SendingFacades } from "../../../src/common/desktop/ipc/RemoteBridge.js"
 import Rectangle = Electron.Rectangle
 import BrowserWindow = Electron.BrowserWindow
 
 const { anything } = matchers
 
-const dictUrl = "dictUrl"
 o.spec("ApplicationWindow Test", function () {
 	const electronLocalshortcut = {
 		callbacks: Object.create(null),
@@ -53,11 +51,11 @@ o.spec("ApplicationWindow Test", function () {
 		getIcon: () => icon,
 	} as const
 	const themeFacadeInstance = new (class implements ThemeFacade {
-		async getSelectedTheme(): Promise<ThemeId | null> {
+		async getThemePreference(): Promise<ThemeId | null> {
 			return "light"
 		}
 
-		async setSelectedTheme(themeId: ThemeId) {}
+		async setThemePreference(themeId: ThemeId) {}
 
 		async getThemes(): Promise<Array<Theme>> {
 			return []
@@ -67,6 +65,10 @@ o.spec("ApplicationWindow Test", function () {
 
 		async getCurrentTheme(): Promise<Theme | null> {
 			return null
+		}
+
+		async prefersDark(): Promise<boolean> {
+			return false
 		}
 
 		async getCurrentThemeWithFallback(): Promise<Theme> {
@@ -164,19 +166,12 @@ o.spec("ApplicationWindow Test", function () {
 								setPermissionRequestHandler: () => {},
 								setSpellCheckerDictionaryDownloadURL: () => {},
 								protocol: {
-									isProtocolIntercepted() {
-										return false
+									handled: true,
+									isProtocolHandled: function () {
+										this.handled = !this.handled
+										return this.handled
 									},
-									isProtocolRegistered() {
-										return false
-									},
-									interceptFileProtocol() {
-										return true
-									},
-									interceptStreamProtocol() {
-										return true
-									},
-									registerFileProtocol() {
+									handle() {
 										return true
 									},
 								},
@@ -283,12 +278,12 @@ o.spec("ApplicationWindow Test", function () {
 		// instances
 		const wmMock = n.mock<WindowManager>("__wm", wm).set()
 		const themeFacade = n.mock<DesktopThemeFacade>("__themeFacade", themeFacadeInstance).set()
-		const offlineDbManager = object<OfflineDbManager>()
 		const remoteBridge = object<RemoteBridge>()
 		const sendingFacades: SendingFacades = {
 			interWindowEventSender: object(),
 			desktopFacade: object(),
 			commonNativeFacade: object(),
+			sqlCipherFacade: object(),
 		}
 		when(remoteBridge.createBridge(anything())).thenReturn(sendingFacades)
 		return {
@@ -298,17 +293,17 @@ o.spec("ApplicationWindow Test", function () {
 			langMock,
 			wmMock,
 			themeFacade,
-			offlineDbFacade: offlineDbManager,
 			remoteBridge,
 			desktopFacade: sendingFacades.desktopFacade,
 			interWindowEventSender: sendingFacades.interWindowEventSender,
 			commonNativeFacade: sendingFacades.commonNativeFacade,
+			sqlCipherFacade: sendingFacades.sqlCipherFacade,
 		}
 	}
 
 	o("construction", async function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, offlineDbFacade, themeFacade, remoteBridge } = standardMocks()
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		o(electronMock.BrowserWindow.mockedInstances.length).equals(1)
 		const bwInstance: BrowserWindow = electronMock.BrowserWindow.mockedInstances[0]
 		// We load some things async before loading URL so we wait for it. __loadedUrl comes from our mock
@@ -350,8 +345,6 @@ o.spec("ApplicationWindow Test", function () {
 		o(bwInstance.setMenuBarVisibility.callCount).equals(1)
 		o(bwInstance.setMenuBarVisibility.args[0]).equals(false)
 		o(bwInstance.removeMenu.callCount).equals(1)
-		o(bwInstance.webContents.session.setSpellCheckerDictionaryDownloadURL.callCount).equals(1)
-		o(bwInstance.webContents.session.setSpellCheckerDictionaryDownloadURL.args[0]).equals(dictUrl + "/dictionaries/")
 		o(Object.keys((bwInstance.webContents as any).callbacks)).deepEquals([
 			"will-attach-webview",
 			"will-navigate",
@@ -368,24 +361,12 @@ o.spec("ApplicationWindow Test", function () {
 			"zoom-changed",
 			"update-target-url",
 		])("webContents registered callbacks dont match")
-		o(bwInstance.webContents.session.protocol.interceptStreamProtocol.callCount).equals(2)
-		o(bwInstance.webContents.session.protocol.registerFileProtocol.args[0]).equals("asset")
+		o(bwInstance.webContents.session.protocol.handle.callCount).equals(3)
 	})
 	o("construction, noAutoLogin", async function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, offlineDbFacade, themeFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 		// noAutoLogin=true
-		const w2 = new ApplicationWindow(
-			wmMock,
-			desktopHtml,
-			icon,
-			electronMock,
-			electronLocalshortcutMock,
-			themeFacade,
-			offlineDbFacade,
-			remoteBridge,
-			dictUrl,
-			true,
-		)
+		const w2 = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge, true)
 		const bwInstance2 = electronMock.BrowserWindow.mockedInstances[0]
 		await bwInstance2.__loadedUrl.promise
 		o(bwInstance2.loadURL.callCount).equals(1)
@@ -397,8 +378,8 @@ o.spec("ApplicationWindow Test", function () {
 	})
 
 	o("redirect to start page after failing to load a page due to 404", async function () {
-		const { wmMock, electronMock, electronLocalshortcutMock, offlineDbFacade, themeFacade, remoteBridge } = standardMocks()
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const { wmMock, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		await bwInstance.__loadedUrl.promise
 		bwInstance.__loadedUrl = defer()
@@ -416,15 +397,16 @@ o.spec("ApplicationWindow Test", function () {
 
 	o("shortcut creation, linux", function () {
 		n.setPlatform("linux")
-		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		downcast(w._browserWindow.webContents).callbacks["did-finish-load"]()
 		o(Object.keys(electronLocalshortcutMock.callbacks)).deepEquals([
 			"Control+F",
 			"Control+P",
 			"F12",
 			"Control+0",
+			"Control+Shift+Q",
 			"F11",
 			"Alt+Right",
 			"Alt+Left",
@@ -434,14 +416,15 @@ o.spec("ApplicationWindow Test", function () {
 	})
 	o("shortcut creation, windows", function () {
 		n.setPlatform("win32")
-		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, remoteBridge } = standardMocks()
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		downcast(w._browserWindow.webContents).callbacks["did-finish-load"]()
 		o(Object.keys(electronLocalshortcutMock.callbacks)).deepEquals([
 			"Control+F",
 			"Control+P",
 			"F12",
 			"Control+0",
+			"Control+Shift+Q",
 			"F11",
 			"Alt+Right",
 			"Alt+Left",
@@ -451,29 +434,19 @@ o.spec("ApplicationWindow Test", function () {
 	})
 	o("shortcut creation, mac", function () {
 		n.setPlatform("darwin")
-		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronLocalshortcutMock, wmMock, electronMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		downcast(w._browserWindow.webContents).callbacks["did-finish-load"]()
-		o(Object.keys(electronLocalshortcutMock.callbacks)).deepEquals(["Command+F", "Command+P", "F12", "Command+0", "Command+Control+F"])
+		o(Object.keys(electronLocalshortcutMock.callbacks)).deepEquals(["Command+F", "Command+P", "F12", "Command+0", "Command+Q", "Command+Control+F"])
 	})
 
 	function testShortcut(shortcuts: Array<string>, assertion: (sm: ReturnType<typeof standardMocks>) => void) {
 		o("[" + shortcuts.join(" >> ") + "]", async function () {
 			const sm = standardMocks()
-			const { electronMock, electronLocalshortcutMock, wmMock, themeFacade, offlineDbFacade, remoteBridge } = sm
+			const { electronMock, electronLocalshortcutMock, wmMock, themeFacade, remoteBridge } = sm
 
-			const w = new ApplicationWindow(
-				wmMock,
-				desktopHtml,
-				icon,
-				electronMock,
-				electronLocalshortcutMock,
-				themeFacade,
-				offlineDbFacade,
-				remoteBridge,
-				dictUrl,
-			)
+			const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 			const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 			;(bwInstance.webContents as any).callbacks["did-finish-load"]()
 			// ApplicationWindow waits for IPC and this is a reliable way to also wait for it
@@ -484,7 +457,7 @@ o.spec("ApplicationWindow Test", function () {
 		})
 	}
 
-	o.spec("shortcuts are used, linux & win", async function () {
+	o.spec("shortcuts are used, linux & win", function () {
 		o.beforeEach(() => n.setPlatform("linux"))
 		testShortcut(["Control+F"], ({ desktopFacade }) => {
 			verify(desktopFacade.openFindInPage())
@@ -527,7 +500,7 @@ o.spec("ApplicationWindow Test", function () {
 		})
 	})
 
-	o.spec("shortcuts are used, mac", async function () {
+	o.spec("shortcuts are used, mac", function () {
 		o.beforeEach(() => n.setPlatform("darwin"))
 		testShortcut(["Command+F"], ({ desktopFacade }) => {
 			verify(desktopFacade.openFindInPage())
@@ -558,17 +531,15 @@ o.spec("ApplicationWindow Test", function () {
 
 	o("shortcuts are set on window reload", async function () {
 		n.setPlatform("linux")
-		const { electronMock, electronLocalshortcutMock, wmMock, themeFacade, offlineDbFacade, remoteBridge, desktopFacade } = standardMocks()
+		const { electronMock, electronLocalshortcutMock, wmMock, themeFacade, remoteBridge, desktopFacade } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		bwInstance.webContents.callbacks["did-finish-load"]()
 		verify(desktopFacade.addShortcuts(anything()))
 		// Simulating reload from here
 		// Reset IPC
 		const initialized = defer<void>()
-
-		remoteBridge.destroyBridge(w)
 
 		bwInstance.webContents.callbacks["did-finish-load"]()
 		// Init IPC
@@ -579,24 +550,24 @@ o.spec("ApplicationWindow Test", function () {
 	})
 
 	o("will-navigate", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
 		const e = {
-			preventDefault: o.spy(),
+			preventDefault: spy(),
 		}
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		bwInstance.webContents.callbacks["will-navigate"](e, "http://test.com")
 		o(e.preventDefault.callCount).equals(1)("Prevent default is called")
 	})
 
 	o("attaching webView is denied", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		const e = {
-			preventDefault: o.spy(),
+			preventDefault: spy(),
 		}
 		bwInstance.webContents.callbacks["will-attach-webview"](e)
 		o(e.preventDefault.callCount).equals(1)
@@ -617,9 +588,9 @@ o.spec("ApplicationWindow Test", function () {
 		o.beforeEach(function () {
 			const sm = standardMocks()
 			electronMock = sm.electronMock
-			let { wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = sm
+			let { wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = sm
 
-			new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+			new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 			bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		})
 		o("not url is not redirected", function () {
@@ -682,14 +653,14 @@ o.spec("ApplicationWindow Test", function () {
 	})
 
 	o("context-menu is passed to handler", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const handlerMock = n.spyify(() => {})
 		w.setContextMenuHandler(handlerMock)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 		const e = {
-			preventDefault: o.spy(),
+			preventDefault: spy(),
 		}
 		bwInstance.webContents.callbacks["context-menu"](e, {
 			linkURL: "dies.ist.ne/url",
@@ -705,10 +676,10 @@ o.spec("ApplicationWindow Test", function () {
 			},
 		])
 	})
-	o("openMailbox sends mailbox info and shows window", function (done) {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, commonNativeFacade } = standardMocks()
+	o("openMailbox sends mailbox info and shows window", async function () {
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge, commonNativeFacade } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		w.openMailBox(
 			{
 				userId: "userId",
@@ -716,18 +687,16 @@ o.spec("ApplicationWindow Test", function () {
 			},
 			"path",
 		)
-		setTimeout(() => {
-			verify(commonNativeFacade.openMailBox("userId", "a@b.c", "path"))
-			o(electronMock.BrowserWindow.mockedInstances[0].show.callCount).equals(1)
-			done()
-		}, 10)
+		await delay(10)
+		verify(commonNativeFacade.openMailBox("userId", "a@b.c", "path"))
+		o(electronMock.BrowserWindow.mockedInstances[0].show.callCount).equals(1)
 	})
-	o("setBounds and getBounds", function (done) {
+	o("setBounds and getBounds", async function () {
 		o.timeout(300)
 		n.setPlatform("linux")
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		o(w.getBounds()).deepEquals({
 			rect: {
 				height: 0,
@@ -794,26 +763,25 @@ o.spec("ApplicationWindow Test", function () {
 			x: 0,
 			y: 10,
 		}
-		setTimeout(() => {
-			// this is needed because of linux DEs moving windows after the fact and us correcting it
-			// see ApplicationWindow.js
-			o(w.getBounds()).deepEquals({
-				rect: {
-					width: 0,
-					height: 0,
-					x: 0,
-					y: -10,
-				},
-				fullscreen: false,
-				scale: 1,
-			})
-			done()
-		}, 250)
+		await delay(250)
+		// this is needed because of linux DEs moving windows after the fact and us correcting it
+		// see ApplicationWindow.js
+		o(w.getBounds()).deepEquals({
+			rect: {
+				width: 0,
+				height: 0,
+				x: 0,
+				y: -10,
+			},
+			fullscreen: false,
+			scale: 1,
+		})
 	})
-	o("findInPage, setSearchOverlayState & stopFindInPage", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+	o("findInPage, setSearchOverlayState & stopFindInPage", function () {
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
+
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const wcMock = electronMock.BrowserWindow.mockedInstances[0].webContents
 		w.stopFindInPage()
 		o(wcMock.stopFindInPage.callCount).equals(1)
@@ -866,9 +834,9 @@ o.spec("ApplicationWindow Test", function () {
 	})
 
 	o("show", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwMock = electronMock.BrowserWindow.mockedInstances[0]
 		o(bwMock.devToolsOpened).equals(false)
 		w.show()
@@ -897,9 +865,9 @@ o.spec("ApplicationWindow Test", function () {
 		o(bwMock.restore.callCount).equals(3)
 	})
 	o("on, once, getTitle, setZoomFactor, isFullScreen, isMinimized, minimize, hide, center, showInactive, isFocused", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
 
 		let f = () => {}
@@ -935,26 +903,26 @@ o.spec("ApplicationWindow Test", function () {
 	})
 
 	o("when closing, database is closed", function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge, sqlCipherFacade } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const userId = "123"
 		w.setUserId(userId)
 		const bwInstance = electronMock.BrowserWindow.mockedInstances[0]
-		;(bwInstance as any).callbacks["close"]()
+		;(bwInstance as any).callbacks["closed"]()
 
-		verify(offlineDbFacade.disposeDb(userId))
+		verify(sqlCipherFacade.closeDb())
 	})
 
 	o("when reloading, database is closed", async function () {
-		const { electronMock, wmMock, electronLocalshortcutMock, offlineDbFacade, themeFacade, remoteBridge } = standardMocks()
+		const { electronMock, wmMock, electronLocalshortcutMock, themeFacade, remoteBridge, sqlCipherFacade } = standardMocks()
 
-		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, offlineDbFacade, remoteBridge, dictUrl)
+		const w = new ApplicationWindow(wmMock, desktopHtml, icon, electronMock, electronLocalshortcutMock, themeFacade, remoteBridge)
 		const userId = "123"
 		w.setUserId(userId)
 
 		await w.reload({})
 
-		verify(offlineDbFacade.disposeDb(userId))
+		verify(sqlCipherFacade.closeDb())
 	})
 })

@@ -2,32 +2,45 @@ package de.tutao.tutanota
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.Configuration.UI_MODE_NIGHT_MASK
+import android.content.res.Configuration.UI_MODE_NIGHT_YES
 import android.graphics.drawable.ColorDrawable
-import android.preference.PreferenceManager
 import android.util.Log
-import android.view.View
 import androidx.annotation.ColorInt
-import de.tutao.tutanota.ipc.ThemeFacade
+import androidx.core.view.WindowInsetsControllerCompat
+import de.tutao.tutashared.getDefaultSharedPreferences
+import de.tutao.tutashared.ipc.ThemeFacade
+import de.tutao.tutashared.isLightHexColor
+import de.tutao.tutashared.parseColor
+import de.tutao.tutashared.toMap
 import org.json.JSONException
 import org.json.JSONObject
 import java.util.*
 
 typealias Theme = Map<String, String>
-
-private const val CURRENT_THEME_KEY = "theme"
-private const val THEMES_KEY = "themes"
-private const val TAG = "AndroidThemeFacade"
-
+typealias ThemeId = String
+typealias ThemePreference = String
 
 class AndroidThemeFacade(
-		private val context: Context,
-		private val activity: MainActivity,
+	private val context: Context,
+	private val activity: MainActivity,
 ) : ThemeFacade {
+	companion object {
+		private const val CURRENT_THEME_KEY = "theme"
+		private const val THEMES_KEY = "themes"
+		private const val TAG = "AndroidThemeFacade"
+		private val LIGHT_FALLBACK_THEME = mapOf(
+			"themeId" to "light-fallback",
+			"content_bg" to "#ffffff",
+			"header_bg" to "#ffffff",
+			"navigation_bg" to "#f6f6f6",
+		)
+	}
 
 	private val prefs: SharedPreferences
-		get() = PreferenceManager.getDefaultSharedPreferences(context)
+		get() = getDefaultSharedPreferences(context)
 
-	private var selectedThemeId: String?
+	private var themePreference: ThemePreference?
 		get() = prefs.getString(CURRENT_THEME_KEY, null)
 		set(value) {
 			prefs.edit().putString(CURRENT_THEME_KEY, value).apply()
@@ -36,10 +49,7 @@ class AndroidThemeFacade(
 
 	private val currentTheme: Theme?
 		get() {
-			var themeId = selectedThemeId
-			if (themeId == null) {
-				themeId = "light"
-			}
+			val themeId = resolveThemePreference()
 			val themes = themes
 			for (theme in themes) {
 				if (themeId == theme["themeId"]) {
@@ -49,13 +59,22 @@ class AndroidThemeFacade(
 			return null
 		}
 
-	val currentThemeWithFallback: Theme
-		get() = currentTheme ?: mapOf(
-				"themeId" to "light-fallback",
-				"content_bg" to "#ffffff",
-				"header_bg" to "#ffffff",
-		)
+	private fun resolveThemePreference(): ThemeId {
+		val pref = themePreference
+		return if (pref == "auto:light|dark") {
+			if (prefersDarkMode) "dark" else "light"
+		} else pref ?: "light"
+	}
 
+	override suspend fun prefersDark(): Boolean = this.prefersDarkMode
+
+	private val prefersDarkMode: Boolean
+		get() = (context.resources.configuration.uiMode and UI_MODE_NIGHT_MASK) == UI_MODE_NIGHT_YES
+
+	val currentThemeWithFallback: Theme
+		get() {
+			return currentTheme ?: LIGHT_FALLBACK_THEME
+		}
 
 	val themes: List<Theme>
 		get() {
@@ -84,21 +103,27 @@ class AndroidThemeFacade(
 
 	private fun doApplyTheme(theme: Theme) {
 		Log.d(TAG, "changeTheme: " + theme["themeId"])
-		@ColorInt val backgroundColor = parseColor(theme["content_bg"]!!)
+		@ColorInt val backgroundColor = parseColor(getColor(theme, "content_bg"))
 		activity.window.setBackgroundDrawable(ColorDrawable(backgroundColor))
 
-		val decorView = activity.window.decorView
-		val headerBg = theme["header_bg"]!!
+		// It is not an accident that navBg and headerBg seem to be swapped, the original color scheme was reused in
+		// this way.
 
+		val navBg = getColor(theme, "header_bg")
+
+		@ColorInt val navColor = parseColor(navBg)
+		val isNavBarLight = navBg.isLightHexColor()
+		activity.window.navigationBarColor = navColor
+
+		val windowInsetController = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+
+		if (isNavBarLight) {
+			windowInsetController.isAppearanceLightNavigationBars = true
+		}
+
+		val headerBg = getColor(theme, "navigation_bg")
 		@ColorInt val statusBarColor = parseColor(headerBg)
 		val isStatusBarLight = headerBg.isLightHexColor()
-		var visibilityFlags = 0
-		if (atLeastOreo()) {
-			activity.window.navigationBarColor = statusBarColor
-			if (isStatusBarLight) {
-				visibilityFlags = visibilityFlags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-			}
-		}
 
 		// Changing status bar color
 		// Before Android M there was no flag to use lightStatusBar (so that text is white or
@@ -107,12 +132,11 @@ class AndroidThemeFacade(
 		// So for Android M and above we alternate between white and dark status bar colors and
 		// we change lightStatusBar flag accordingly.
 		activity.window.statusBarColor = statusBarColor
-		if (isStatusBarLight) {
-			visibilityFlags = visibilityFlags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-		}
-
-		decorView.systemUiVisibility = visibilityFlags
+		windowInsetController.isAppearanceLightStatusBars = isStatusBarLight
 	}
+
+	private fun getColor(theme: Map<String, String>, key: String): String =
+		theme[key] ?: LIGHT_FALLBACK_THEME[key] ?: "#FFFFFF"
 
 	override suspend fun getThemes(): List<Map<String, String>> {
 		return this.themes
@@ -132,12 +156,12 @@ class AndroidThemeFacade(
 		return
 	}
 
-	override suspend fun getSelectedTheme(): String? {
-		return this.selectedThemeId
+	override suspend fun getThemePreference(): ThemePreference? {
+		return this.themePreference
 	}
 
-	override suspend fun setSelectedTheme(themeId: String) {
-		this.selectedThemeId = themeId
+	override suspend fun setThemePreference(themePreference: ThemePreference) {
+		this.themePreference = themePreference
 		applyTheme()
 		return
 	}

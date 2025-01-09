@@ -1,21 +1,22 @@
-import o from "ospec"
-import type { WorkerClient } from "../../../../src/api/main/WorkerClient.js"
-import { CryptoError } from "../../../../src/api/common/error/CryptoError.js"
-import { NotAuthenticatedError } from "../../../../src/api/common/error/RestError.js"
-import { Request } from "../../../../src/api/common/MessageDispatcher.js"
-import { ProgrammingError } from "../../../../src/api/common/error/ProgrammingError.js"
-import { logins } from "../../../../src/api/main/LoginController.js"
-import { locator } from "../../../../src/api/main/MainLocator.js"
+import o from "@tutao/otest"
+import type { WorkerClient } from "../../../../src/common/api/main/WorkerClient.js"
+import { NotAuthenticatedError } from "../../../../src/common/api/common/error/RestError.js"
+import { Request } from "../../../../src/common/api/common/threading/MessageDispatcher.js"
+import { ProgrammingError } from "../../../../src/common/api/common/error/ProgrammingError.js"
+import { initCommonLocator, locator } from "../../../../src/common/api/main/CommonLocator.js"
 import { assertThrows } from "@tutao/tutanota-test-utils"
-import { SessionType } from "../../../../src/api/common/SessionType.js"
+import { SessionType } from "../../../../src/common/api/common/SessionType.js"
+import { CryptoError } from "@tutao/tutanota-crypto/error.js"
+import { mailLocator } from "../../../../src/mail-app/mailLocator.js"
 
 o.spec(
 	"WorkerTest request / response",
 	node(function () {
 		let worker: WorkerClient
 		o.before(async function () {
-			o.timeout(2000)
-			locator.init()
+			await mailLocator.init()
+			initCommonLocator(mailLocator)
+
 			worker = locator.worker
 			await worker.initialized
 		})
@@ -31,9 +32,10 @@ o.spec(
 		})
 		o("login", async function () {
 			o.timeout(5000)
-			await logins.createSession("map-free@tutanota.de", "map", SessionType.Login)
+			await locator.logins.createSession("map-free@tutanota.de", "map", SessionType.Login)
 		})
 		o("programming error handling", async function () {
+			o.timeout(2000)
 			const e = await assertThrows(ProgrammingError, () =>
 				worker._postRequest(
 					new Request("testError", [
@@ -47,6 +49,7 @@ o.spec(
 			o(e?.message).equals("wtf: ProgrammingError")
 		})
 		o("crypto error handling", async function () {
+			o.timeout(2000)
 			const e = await assertThrows(CryptoError, () =>
 				worker._postRequest(
 					new Request("testError", [
@@ -60,6 +63,7 @@ o.spec(
 			o(e?.message).equals("wtf: CryptoError")
 		})
 		o("rest error handling", async function () {
+			o.timeout(2000)
 			const e = await assertThrows(NotAuthenticatedError, () =>
 				worker._postRequest(
 					new Request("testError", [

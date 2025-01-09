@@ -1,7 +1,7 @@
 import { Accumulator } from "./Accumulator.js"
 import { EnumDefinition, FacadeDefinition, getArgs, LangGenerator, minusculize, RenderedType, StructDefinition, TypeRefDefinition } from "./common.js"
 import { ParsedType, parseType } from "./Parser.js"
-import path from "path"
+import path from "node:path"
 
 export class TypescriptGenerator implements LangGenerator {
 	generateGlobalDispatcher(name: string, facadeNames: Array<string>): string {
@@ -169,7 +169,7 @@ export class TypescriptGenerator implements LangGenerator {
 		return new Accumulator()
 			.do((acc) => this.generateDocComment(acc, doc))
 			.line(`export const enum ${name} {`)
-			.indented((acc) => acc.lines(values.map((value, index) => `${value} = ${index},`)))
+			.indented((acc) => acc.lines(values.map((value, index) => `${value} = "${index}",`)))
 			.line("}")
 			.finish()
 	}
@@ -201,6 +201,8 @@ function renderTypescriptType(parsed: ParsedType): RenderedType {
 			return { externals: [], name: maybeNullable("Uint8Array", nullable) }
 		case "void":
 			return { externals: [], name: maybeNullable("void", nullable) }
+		case "IdTuple":
+			return { externals: [], name: maybeNullable("IdTuple", nullable) }
 		default:
 			return { externals: [baseName], name: maybeNullable(baseName, nullable) }
 	}

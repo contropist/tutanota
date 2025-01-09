@@ -1,6 +1,7 @@
-// TODO reconcile with CryptoError in tutanota-3
-export class CryptoError extends Error {
+import { TutanotaError } from "@tutao/tutanota-error"
+
+export class CryptoError extends TutanotaError {
 	constructor(message: string, error?: Error) {
-		super(error ? message + "> " + (error.stack ? error.stack : error.message) : message)
+		super("CryptoError", error ? message + "> " + (error.stack ? error.stack : error.message) : message)
 	}
 }

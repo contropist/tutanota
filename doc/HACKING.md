@@ -1,4 +1,4 @@
-# Hacking on the Tutanota client
+# Hacking on the Tuta Mail client
 
 ![Overview](Overview.svg)
 
@@ -44,11 +44,11 @@ contains most of the logic for server communication, encryption, indexing etc.
 ### Communication
 
 Worker, main thread & apps communicate through the messages. Protocol is described in the
-[RemoteMessageDispatcher](../src/api/common/MessageDispatcher.js). See [WorkerClient](../src/api/main/WorkerClient.js)
+[RemoteMessageDispatcher](../src/common/api/common/threading/MessageDispatcher.ts). See [WorkerClient](../src/common/api/main/WorkerClient.ts)
 and
-[WorkerImpl](../src/api/worker/WorkerImpl.js) for the client and server part.
+[WorkerImpl](../src/common/api/worker/WorkerImpl.ts) for the client and server part.
 
-Native code communicates through the [NativeInterface](../src/native/common/NativeInterface.js).
+Native code communicates through the [NativeInterface](../src/common/native/common/NativeInterface.ts).
 
 ### UI code
 
@@ -92,11 +92,11 @@ One level below `EntityWorker` lays `EntityRestInterface` which is either `Entit
 currently. Caches saves requested entities is the memory and updates them with WebSocket events.
 
 If you're listening for WebSocket updates in the worker part (and you should justify doing that) then you should change
-[EventBus](../src/api/worker/EventBusClient.js) to do that. For the main thread you can subscribe to the
-[EventController](../src/api/main/EventController.js).
+[EventBus](../src/common/api/worker/EventBusClient.ts) to do that. For the main thread you can subscribe to the
+[EventController](../src/common/api/main/EventController.ts).
 
 `EventBus` and `EntityRestClient` make sure that entities are automatically encrypted/decrypted when needed. See
-[decryptAndMapToInstance()](../src/api/worker/crypto/CryptoFacade.js).
+[decryptAndMapToInstance()](../src/common/api/worker/crypto/CryptoFacade.ts).
 
 #### Entity updates
 
@@ -104,7 +104,7 @@ Most of the server database changes are reflected in the `EntityUpdate`s we rece
 which happened to the entity. Updates are grouped into `EntityEventBatch`es. These batches are ordered and client tries
 tp stay up-to-date with the server (for caching and indexing).
 
-## Workflow
+## Workflow and Testing
 
 ```bash
 node make
@@ -116,6 +116,42 @@ To run tests:
 
 ```bash
 npm test
+```
+
+To run only the primary project tests and no tests for the modules:
+
+```bash
+npm run test:app
+```
+
+To run only specific tests:
+
+```bash
+npm run test:app -- -f 'CalendarModel'
+```
+
+To run only specific tests without npm:
+
+```bash
+node test -f CalendarModel
+```
+
+To run tests in browser:
+
+```bash
+npm run test:app -- -br
+```
+
+To run tests only in browser:
+
+```bash
+npm run test:app -- --no-run -br
+```
+
+To show all test options:
+
+```bash
+npm:run test:app -- --help
 ```
 
 ## Chunking rules
@@ -137,3 +173,5 @@ npm test
 - anything that depends on luxon goes into `date` and is being imported dynamically
 - native code is only imported from common code dynamically. Worker is exception for technical reasons.
 - `contacts` and `mail-editor` depend on sanitizer statically, rest of the app doesn't
+
+You can check if your imports respect chunking by running `node webapp local`.

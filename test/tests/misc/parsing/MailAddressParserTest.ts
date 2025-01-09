@@ -1,12 +1,12 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
 	fullNameToFirstAndLastName,
 	getCleanedMailAddress,
 	mailAddressToFirstAndLastName,
 	parseMailtoUrl,
 	stringToNameAndMailAddress,
-} from "../../../../src/misc/parsing/MailAddressParser.js"
-import { isMailAddress } from "../../../../src/misc/FormatValidator.js"
+} from "../../../../src/common/misc/parsing/MailAddressParser.js"
+import { isMailAddress } from "../../../../src/common/misc/FormatValidator.js"
 
 o.spec("MailAddressParser", function () {
 	o("parseMailtoUrl single address", function () {

@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
 	_createNewIndexUpdate,
 	decryptMetaData,
@@ -12,27 +12,22 @@ import {
 	htmlToText,
 	typeRefToTypeInfo,
 	userIsGlobalAdmin,
-	userIsLocalOrGlobalAdmin,
-} from "../../../../../src/api/worker/search/IndexUtils.js"
-import { base64ToUint8Array, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
-import { concat } from "@tutao/tutanota-utils"
-import type { SearchIndexEntry, SearchIndexMetaDataRow } from "../../../../../src/api/worker/search/SearchTypes.js"
-import { createUser, UserTypeRef } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { ContactTypeRef } from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { createGroupMembership } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { GroupType, OperationType } from "../../../../../src/api/common/TutanotaConstants.js"
-import { createEntityUpdate } from "../../../../../src/api/entities/sys/TypeRefs.js"
-import { containsEventOfType } from "../../../../../src/api/common/utils/Utils.js"
-import { MailTypeRef } from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { byteLength } from "@tutao/tutanota-utils"
-import { aes256Decrypt, aes256RandomKey, fixedIv } from "@tutao/tutanota-crypto"
-import { EntityUpdateData } from "../../../../../src/api/main/EventController.js"
-import { resolveTypeReference } from "../../../../../src/api/common/EntityFunctions.js"
+} from "../../../../../src/common/api/worker/search/IndexUtils.js"
+import { base64ToUint8Array, byteLength, concat, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
+import type { SearchIndexEntry, SearchIndexMetaDataRow } from "../../../../../src/common/api/worker/search/SearchTypes.js"
+import { EntityUpdateTypeRef, GroupMembershipTypeRef, UserTypeRef } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
+import { ContactTypeRef, MailTypeRef } from "../../../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { GroupType, OperationType } from "../../../../../src/common/api/common/TutanotaConstants.js"
+import { aes256RandomKey, fixedIv, unauthenticatedAesDecrypt } from "@tutao/tutanota-crypto"
+import { resolveTypeReference } from "../../../../../src/common/api/common/EntityFunctions.js"
+import { createTestEntity } from "../../../TestUtils.js"
+import { containsEventOfType, EntityUpdateData } from "../../../../../src/common/api/common/utils/EntityUpdateUtils.js"
+
 o.spec("Index Utils", () => {
 	o("encryptIndexKey", function () {
 		let key = aes256RandomKey()
 		let encryptedKey = encryptIndexKeyBase64(key, "blubb", fixedIv)
-		let decrypted = aes256Decrypt(key, concat(fixedIv, base64ToUint8Array(encryptedKey)), true, false)
+		let decrypted = unauthenticatedAesDecrypt(key, concat(fixedIv, base64ToUint8Array(encryptedKey)), true)
 		o(utf8Uint8ArrayToString(decrypted)).equals("blubb")
 	})
 	o("encryptSearchIndexEntry + decryptSearchIndexEntry", function () {
@@ -49,7 +44,7 @@ o.spec("Index Utils", () => {
 		// position[1] 536 = 0x218 => length of number = 2 | 0x80 = 0x82 numbers: 0x02, 0x18
 		// position[2] 3 => 0x03
 		const encodedIndexEntry = [0x54, 0xc, 0x82, 0x02, 0x18, 0x03]
-		const result = aes256Decrypt(key, encryptedEntry.slice(16), true, false)
+		const result = unauthenticatedAesDecrypt(key, encryptedEntry.slice(16), true)
 		o(Array.from(result)).deepEquals(Array.from(encodedIndexEntry))
 		let decrypted = decryptSearchIndexEntry(key, encryptedEntry, fixedIv)
 		o(JSON.stringify(decrypted.encId)).equals(JSON.stringify(encId))
@@ -82,7 +77,7 @@ o.spec("Index Utils", () => {
 		const encryptedMeta = encryptMetaData(key, meta)
 		o(encryptedMeta.id).equals(meta.id)
 		o(encryptedMeta.word).equals(meta.word)
-		o(Array.from(aes256Decrypt(key, encryptedMeta.rows, true, false))).deepEquals([
+		o(Array.from(unauthenticatedAesDecrypt(key, encryptedMeta.rows, true))).deepEquals([
 			// First row
 			1,
 			64,
@@ -126,19 +121,9 @@ o.spec("Index Utils", () => {
 		const ContactTypeModel = await resolveTypeReference(ContactTypeRef)
 		o(typeRefToTypeInfo(ContactTypeRef).typeId).equals(ContactTypeModel.id)
 	})
-	o("userIsLocalOrGlobalAdmin", function () {
-		let user = createUser()
-		user.memberships.push(createGroupMembership())
-		user.memberships[0].groupType = GroupType.Admin
-		o(userIsLocalOrGlobalAdmin(user)).equals(true)
-		user.memberships[0].groupType = GroupType.LocalAdmin
-		o(userIsLocalOrGlobalAdmin(user)).equals(true)
-		user.memberships[0].groupType = GroupType.Mail
-		o(userIsLocalOrGlobalAdmin(user)).equals(false)
-	})
 	o("userIsGlobalAdmin", function () {
-		let user = createUser()
-		user.memberships.push(createGroupMembership())
+		let user = createTestEntity(UserTypeRef)
+		user.memberships.push(createTestEntity(GroupMembershipTypeRef))
 		user.memberships[0].groupType = GroupType.Admin
 		o(userIsGlobalAdmin(user)).equals(true)
 		user.memberships[0].groupType = GroupType.LocalAdmin
@@ -147,16 +132,16 @@ o.spec("Index Utils", () => {
 		o(userIsGlobalAdmin(user)).equals(false)
 	})
 	o("filterIndexMemberships", function () {
-		let user = createUser()
+		let user = createTestEntity(UserTypeRef)
 		user.memberships = [
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
 		]
 		user.memberships[0].groupType = GroupType.Admin
 		user.memberships[1].groupType = GroupType.Contact
@@ -169,17 +154,17 @@ o.spec("Index Utils", () => {
 		o(filterIndexMemberships(user)).deepEquals([user.memberships[0], user.memberships[1], user.memberships[2], user.memberships[5]])
 	})
 	o("filterMailMemberships", function () {
-		let user = createUser()
+		let user = createTestEntity(UserTypeRef)
 		user.memberships = [
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
-			createGroupMembership(),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
+			createTestEntity(GroupMembershipTypeRef),
 		]
 		user.memberships[0].groupType = GroupType.Admin
 		user.memberships[1].groupType = GroupType.Contact
@@ -194,7 +179,7 @@ o.spec("Index Utils", () => {
 	})
 	o("containsEventOfType", function () {
 		function createUpdate(type: OperationType, id: Id): EntityUpdateData {
-			let update = createEntityUpdate()
+			let update = createTestEntity(EntityUpdateTypeRef)
 			update.operation = type
 			update.instanceId = id
 			return update as EntityUpdateData

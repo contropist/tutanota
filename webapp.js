@@ -9,12 +9,12 @@
  * Unfortunately manual bundling is "infectious" in a sense that if you manually put module in a chunk all its dependencies will also be
  * put in that chunk unless they are sorted into another manual chunk. Ideally this would be semi-automatic with directory-based chunks.
  */
-import { program, Argument } from "commander"
+import { Argument, program } from "commander"
 import fs from "fs-extra"
-import path, { dirname } from "path"
+import path, { dirname } from "node:path"
 import { buildWebapp } from "./buildSrc/buildWebapp.js"
 import { getTutanotaAppVersion, measure } from "./buildSrc/buildUtils.js"
-import { fileURLToPath } from "url"
+import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -24,9 +24,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 await program
 	.usage('[options] [test|prod|local|release|host <url>], "release" is default')
-	.description("Utility to build the web part of tutanota")
+	.description("Utility to build the web part of tuta")
 	.addArgument(new Argument("stage").choices(["test", "prod", "local", "host", "release"]).default("prod").argOptional())
 	.addArgument(new Argument("host").argOptional())
+	.option("--app <app>", "app to build", "mail")
 	.option("--disable-minify", "disable minification")
 	.option("--out-dir <outDir>", "where to copy the client")
 	.action(async (stage, host, options) => {
@@ -50,7 +51,7 @@ await program
 async function doBuild(options) {
 	try {
 		measure()
-		const version = getTutanotaAppVersion()
+		const version = await getTutanotaAppVersion()
 		const minify = options.disableMinify !== true
 
 		if (!minify) {
@@ -64,10 +65,12 @@ async function doBuild(options) {
 			measure,
 			minify,
 			projectDir: __dirname,
+			app: options.app,
 		})
 
-		const now = new Date(Date.now()).toTimeString().substr(0, 5)
+		const now = new Date(Date.now()).toTimeString().substring(0, 5)
 		console.log(`\nBuild time: ${measure()}s (${now})`)
+		process.exit(0)
 	} catch (e) {
 		console.error("\nBuild error:", e)
 		process.exit(1)

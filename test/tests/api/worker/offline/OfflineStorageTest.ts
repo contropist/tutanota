@@ -1,40 +1,48 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import { verify } from "@tutao/tutanota-test-utils"
-import { customTypeEncoders, OfflineStorage, sql } from "../../../../../src/api/worker/offline/OfflineStorage.js"
+import { customTypeEncoders, ensureBase64Ext, OfflineStorage, OfflineStorageCleaner } from "../../../../../src/common/api/worker/offline/OfflineStorage.js"
 import { instance, object, when } from "testdouble"
 import * as cborg from "cborg"
-import { GENERATED_MIN_ID, generatedIdToTimestamp, getElementId, timestampToGeneratedId } from "../../../../../src/api/common/utils/EntityUtils.js"
-import { getDayShifted, getFirstOrThrow, getTypeId, lastThrow, mapNullable, promiseMap, TypeRef } from "@tutao/tutanota-utils"
-import { DateProvider } from "../../../../../src/api/common/DateProvider.js"
 import {
-	createFile,
-	createMail,
-	createMailBody,
-	createMailDetails,
-	createMailDetailsBlob,
-	createMailDetailsDraft,
-	createMailFolder,
+	constructMailSetEntryId,
+	elementIdPart,
+	GENERATED_MAX_ID,
+	GENERATED_MIN_ID,
+	generatedIdToTimestamp,
+	getElementId,
+	listIdPart,
+	timestampToGeneratedId,
+} from "../../../../../src/common/api/common/utils/EntityUtils.js"
+import { getDayShifted, getFirstOrThrow, getTypeId, lastThrow, mapNullable, promiseMap, TypeRef } from "@tutao/tutanota-utils"
+import { DateProvider } from "../../../../../src/common/api/common/DateProvider.js"
+import {
+	BodyTypeRef,
+	createMailFolderRef,
 	FileTypeRef,
 	Mail,
-	MailBody,
-	MailBodyTypeRef,
+	MailBagTypeRef,
+	MailBoxTypeRef,
+	MailDetailsBlob,
 	MailDetailsBlobTypeRef,
-	MailDetailsDraftTypeRef,
 	MailDetailsTypeRef,
 	MailFolderTypeRef,
+	MailSetEntryTypeRef,
 	MailTypeRef,
-} from "../../../../../src/api/entities/tutanota/TypeRefs.js"
-import { OfflineStorageMigrator } from "../../../../../src/api/worker/offline/OfflineStorageMigrator.js"
-import { InterWindowEventFacadeSendDispatcher } from "../../../../../src/native/common/generatedipc/InterWindowEventFacadeSendDispatcher.js"
-import { DesktopSqlCipher } from "../../../../../src/desktop/DesktopSqlCipher.js"
-import * as fs from "fs"
-import { untagSqlObject } from "../../../../../src/api/worker/offline/SqlValue.js"
-import { MailFolderType } from "../../../../../src/api/common/TutanotaConstants.js"
-import { BlobElementEntity, ElementEntity, ListElementEntity, SomeEntity } from "../../../../../src/api/common/EntityTypes.js"
-import { resolveTypeReference } from "../../../../../src/api/common/EntityFunctions.js"
-import { Type as TypeId } from "../../../../../src/api/common/EntityConstants.js"
-import { expandId } from "../../../../../src/api/worker/rest/DefaultEntityRestCache.js"
-import { WorkerImpl } from "../../../../../src/api/worker/WorkerImpl.js"
+} from "../../../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { OfflineStorageMigrator } from "../../../../../src/common/api/worker/offline/OfflineStorageMigrator.js"
+import { InterWindowEventFacadeSendDispatcher } from "../../../../../src/common/native/common/generatedipc/InterWindowEventFacadeSendDispatcher.js"
+import * as fs from "node:fs"
+import { untagSqlObject } from "../../../../../src/common/api/worker/offline/SqlValue.js"
+import { MailSetKind } from "../../../../../src/common/api/common/TutanotaConstants.js"
+import { BlobElementEntity, ElementEntity, ListElementEntity, SomeEntity } from "../../../../../src/common/api/common/EntityTypes.js"
+import { resolveTypeReference } from "../../../../../src/common/api/common/EntityFunctions.js"
+import { Type as TypeId } from "../../../../../src/common/api/common/EntityConstants.js"
+import { expandId } from "../../../../../src/common/api/worker/rest/DefaultEntityRestCache.js"
+import { UserTypeRef } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
+import { DesktopSqlCipher } from "../../../../../src/common/desktop/db/DesktopSqlCipher.js"
+import { createTestEntity } from "../../../TestUtils.js"
+import { sql } from "../../../../../src/common/api/worker/offline/Sql.js"
+import { MailOfflineCleaner } from "../../../../../src/mail-app/workerUtils/offline/MailOfflineCleaner.js"
 
 function incrementId(id: Id, ms: number) {
 	const timestamp = generatedIdToTimestamp(id)
@@ -58,7 +66,7 @@ const nativePath = buildOptions.sqliteNativePath
 const database = "./testdatabase.sqlite"
 export const offlineDatabaseTestKey = Uint8Array.from([3957386659, 354339016, 3786337319, 3366334248])
 
-o.spec("OfflineStorage", function () {
+o.spec("OfflineStorageDb", function () {
 	const now = new Date("2022-01-01 00:00:00 UTC")
 	const timeRangeDays = 10
 	const userId = "userId"
@@ -72,8 +80,8 @@ o.spec("OfflineStorage", function () {
 	let dateProviderMock: DateProvider
 	let storage: OfflineStorage
 	let migratorMock: OfflineStorageMigrator
+	let offlineStorageCleanerMock: OfflineStorageCleaner
 	let interWindowEventSenderMock: InterWindowEventFacadeSendDispatcher
-	let worker: WorkerImpl
 
 	o.beforeEach(async function () {
 		dbFacade = new DesktopSqlCipher(nativePath, database, false)
@@ -81,8 +89,9 @@ o.spec("OfflineStorage", function () {
 		dateProviderMock = object<DateProvider>()
 		migratorMock = instance(OfflineStorageMigrator)
 		interWindowEventSenderMock = instance(InterWindowEventFacadeSendDispatcher)
+		offlineStorageCleanerMock = new MailOfflineCleaner()
 		when(dateProviderMock.now()).thenReturn(now.getTime())
-		storage = new OfflineStorage(dbFacade, interWindowEventSenderMock, dateProviderMock, migratorMock)
+		storage = new OfflineStorage(dbFacade, interWindowEventSenderMock, dateProviderMock, migratorMock, offlineStorageCleanerMock)
 	})
 
 	o.afterEach(async function () {
@@ -147,11 +156,163 @@ o.spec("OfflineStorage", function () {
 		})
 
 		o.spec("Offline storage round trip", function () {
+			o.spec("ElementType", function () {
+				o("deleteAllOfType", async function () {
+					const userId = "id1"
+					const storableUser = createTestEntity(UserTypeRef, { _id: userId })
+
+					await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					let user = await storage.get(UserTypeRef, null, userId)
+					o(user).equals(null)
+
+					await storage.put(storableUser)
+
+					user = await storage.get(UserTypeRef, null, userId)
+					o(user!._id).equals(storableUser._id)
+
+					await storage.deleteAllOfType(UserTypeRef)
+
+					user = await storage.get(UserTypeRef, null, userId)
+					o(user).equals(null)
+				})
+			})
+
+			o.spec("ListElementType generatedId", function () {
+				o("deleteAllOfType", async function () {
+					const listId = "listId1"
+					const elementId = "id1"
+					const storableMail = createTestEntity(MailTypeRef, { _id: [listId, elementId] })
+
+					await storage.init({ userId: elementId, databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					let mail = await storage.get(MailTypeRef, listId, elementId)
+					o(mail).equals(null)
+
+					await storage.put(storableMail)
+					await storage.setNewRangeForList(MailTypeRef, listId, elementId, elementId)
+
+					mail = await storage.get(MailTypeRef, listId, elementId)
+					o(mail!._id).deepEquals(storableMail._id)
+					const rangeBefore = await storage.getRangeForList(MailTypeRef, listId)
+					o(rangeBefore).deepEquals({ upper: elementId, lower: elementId })
+					await storage.deleteAllOfType(MailTypeRef)
+
+					mail = await storage.get(MailTypeRef, listId, elementId)
+					o(mail).equals(null)
+					const rangeAfter = await storage.getRangeForList(MailTypeRef, listId)
+					o(rangeAfter).equals(null)
+				})
+
+				o("deleteWholeList", async function () {
+					const listOne = "listId1"
+					const listTwo = "listId2"
+					await storage.init({ userId: "user", databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					const listOneMailOne = createTestEntity(MailTypeRef, { _id: [listOne, "id1"] })
+					const listOneMailTwo = createTestEntity(MailTypeRef, { _id: [listOne, "id2"] })
+					const listTwoMail = createTestEntity(MailTypeRef, { _id: [listTwo, "id3"] })
+					await storage.put(listOneMailOne)
+					await storage.put(listOneMailTwo)
+					await storage.put(listTwoMail)
+					await storage.setNewRangeForList(MailTypeRef, listOne, "id1", "id2")
+					await storage.setNewRangeForList(MailTypeRef, listTwo, "id3", "id3")
+
+					await storage.deleteWholeList(MailTypeRef, listOne)
+
+					const mailsInListOne = await storage.getWholeList(MailTypeRef, listOne)
+					const mailsInListTwo = await storage.getWholeList(MailTypeRef, listTwo)
+					const rangeListOne = await storage.getRangeForList(MailTypeRef, listOne)
+					const rangeListTwo = await storage.getRangeForList(MailTypeRef, listTwo)
+
+					o(mailsInListOne).deepEquals([])
+					o(mailsInListTwo).deepEquals([listTwoMail])
+					o(rangeListOne).equals(null)
+					o(rangeListTwo).deepEquals({ lower: "id3", upper: "id3" })
+				})
+
+				o("provideMultiple", async function () {
+					const listId = "listId1"
+					const elementId1 = "id1"
+					const elementId2 = "id2"
+					const storableMail1 = createTestEntity(MailTypeRef, { _id: [listId, elementId1] })
+					const storableMail2 = createTestEntity(MailTypeRef, { _id: [listId, elementId2] })
+
+					await storage.init({ userId: elementId1, databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					let mails = await storage.provideMultiple(MailTypeRef, listId, [elementId1])
+					o(mails).deepEquals([])
+
+					await storage.put(storableMail1)
+
+					mails = await storage.provideMultiple(MailTypeRef, listId, [elementId1, elementId2])
+					o(mails).deepEquals([storableMail1])
+
+					await storage.put(storableMail2)
+
+					mails = await storage.provideMultiple(MailTypeRef, listId, [elementId1, elementId2])
+					o(mails).deepEquals([storableMail1, storableMail2])
+				})
+			})
+
+			o.spec("ListElementType customId", function () {
+				o("deleteAllOfType", async function () {
+					const listId = "listId1"
+					const elementId = constructMailSetEntryId(new Date(), "mailId")
+					const storableMailSetEntry = createTestEntity(MailSetEntryTypeRef, { _id: [listId, elementId] })
+
+					await storage.init({ userId: elementId, databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					let mailSetEntry = await storage.get(MailSetEntryTypeRef, listId, elementId)
+					o(mailSetEntry).equals(null)
+
+					await storage.put(storableMailSetEntry)
+					await storage.setNewRangeForList(MailSetEntryTypeRef, listId, elementId, elementId)
+
+					mailSetEntry = await storage.get(MailSetEntryTypeRef, listId, elementId)
+					o(mailSetEntry!._id).deepEquals(storableMailSetEntry._id)
+					const rangeBefore = await storage.getRangeForList(MailSetEntryTypeRef, listId)
+					o(rangeBefore).deepEquals({ upper: elementId, lower: elementId })
+					await storage.deleteAllOfType(MailSetEntryTypeRef)
+
+					mailSetEntry = await storage.get(MailSetEntryTypeRef, listId, elementId)
+					o(mailSetEntry).equals(null)
+					const rangeAfter = await storage.getRangeForList(MailSetEntryTypeRef, listId)
+					o(rangeAfter).equals(null)
+				})
+
+				o("provideMultiple", async function () {
+					const listId = "listId1"
+					const elementId1 = constructMailSetEntryId(new Date(1724675875113), "mailId1")
+					const elementId2 = constructMailSetEntryId(new Date(1724675899978), "mailId2")
+					const storableMailSetEntry1 = createTestEntity(MailSetEntryTypeRef, { _id: [listId, elementId1] })
+					const storableMailSetEntry2 = createTestEntity(MailSetEntryTypeRef, { _id: [listId, elementId2] })
+
+					await storage.init({ userId: elementId1, databaseKey, timeRangeDays, forceNewDatabase: false })
+
+					let mails = await storage.provideMultiple(MailSetEntryTypeRef, listId, [elementId1])
+					o(mails).deepEquals([])
+
+					await storage.put(storableMailSetEntry1)
+
+					mails = await storage.provideMultiple(MailSetEntryTypeRef, listId, [elementId1, elementId2])
+					o(mails).deepEquals([storableMailSetEntry1])
+
+					await storage.put(storableMailSetEntry2)
+
+					mails = await storage.provideMultiple(MailSetEntryTypeRef, listId, [elementId1, elementId2])
+					o(mails).deepEquals([storableMailSetEntry1, storableMailSetEntry2])
+				})
+			})
+
 			o.spec("BlobElementType", function () {
 				o("put, get and delete", async function () {
 					const archiveId = "archiveId"
 					const blobElementId = "id1"
-					const storableMailDetails = createMailDetailsBlob({ _id: [archiveId, blobElementId], details: createMailDetails() })
+					const storableMailDetails = createTestEntity(MailDetailsBlobTypeRef, {
+						_id: [archiveId, blobElementId],
+						details: createTestEntity(MailDetailsTypeRef),
+					})
 
 					await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
 
@@ -174,7 +335,11 @@ o.spec("OfflineStorage", function () {
 					const archiveId = "archiveId"
 					const blobElementId = "id1"
 					const _ownerGroup = "ownerGroup"
-					const storableMailDetails = createMailDetailsBlob({ _id: [archiveId, blobElementId], _ownerGroup, details: createMailDetails() })
+					const storableMailDetails = createTestEntity(MailDetailsBlobTypeRef, {
+						_id: [archiveId, blobElementId],
+						_ownerGroup,
+						details: createTestEntity(MailDetailsTypeRef),
+					})
 
 					await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
 
@@ -188,21 +353,72 @@ o.spec("OfflineStorage", function () {
 			})
 		})
 
-		o.spec("Clearing excluded data", function () {
-			const listId = "listId"
+		o.spec("Clearing excluded data for MailSet mailbox", function () {
+			const spamFolderId = "spamFolder"
+			const trashFolderId = "trashFolder"
+			const spamListId = "spamList"
+			const trashListId = "trashList"
+			const spamMailSetEntriesId = "spamMailSetEntriesId"
+			const trashMailSetEntriesId = "trashMailSetEntriesId"
+			const mailListId = "listId"
 			const mailType = getTypeId(MailTypeRef)
 
-			o("old ranges will be deleted (draft details)", async function () {
-				// create tables
+			o.beforeEach(async function () {
 				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
 
-				const upper = offsetId(-1)
-				const lower = offsetId(-2)
-				const mailDetailsDraftId: IdTuple = ["mailDetailsList", "mailDetailsDraftId"]
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "mailFolderId"], mails: listId }))
-				await insertEntity(createMailDetailsDraft({ _id: mailDetailsDraftId, details: createMailDetails() }))
-				await insertEntity(createMail({ _id: [listId, "anything"], mailDetailsDraft: mailDetailsDraftId }))
-				await insertRange(MailTypeRef, listId, lower, upper)
+				await insertEntity(
+					createTestEntity(MailBoxTypeRef, {
+						_id: "mailboxId",
+						currentMailBag: createTestEntity(MailBagTypeRef, { _id: "mailBagId", mails: mailListId }),
+						folders: createMailFolderRef({ folders: "mailFolderList" }),
+					}),
+				)
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, {
+						_id: ["mailFolderList", spamFolderId],
+						mails: spamListId,
+						entries: spamMailSetEntriesId,
+						folderType: MailSetKind.SPAM,
+					}),
+				)
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, {
+						_id: ["mailFolderList", trashFolderId],
+						mails: trashListId,
+						entries: trashMailSetEntriesId,
+						folderType: MailSetKind.TRASH,
+					}),
+				)
+			})
+
+			o("ranges before timeRangeDays will be deleted", async function () {
+				const upperBeforeTimeRangeDays = offsetId(-1)
+				const lowerBeforeTimeRangeDays = offsetId(-2)
+				const upperDate = getDayShifted(now, 0 - timeRangeDays - 1)
+				const lowerDate = getDayShifted(now, 0 - timeRangeDays - 2)
+				const mailSetEntryTypeModel = await resolveTypeReference(MailSetEntryTypeRef)
+				const lowerMailSetEntryIdBeforeTimeRangeDays = ensureBase64Ext(mailSetEntryTypeModel, constructMailSetEntryId(lowerDate, GENERATED_MIN_ID))
+				const upperMailSetEntryIdBeforeTimeRangeDays = ensureBase64Ext(mailSetEntryTypeModel, constructMailSetEntryId(upperDate, GENERATED_MAX_ID))
+				const mailId: IdTuple = [mailListId, "anything"]
+				const mailSetEntryId: IdTuple = ["mailSetEntriesListId", constructMailSetEntryId(upperDate, elementIdPart(mailId))]
+				const mailDetailsBlobId: IdTuple = ["mailDetailsList", "mailDetailsBlobId"]
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, {
+						_id: ["mailFolderList", "mailFolderId"],
+						mails: mailListId,
+						entries: listIdPart(mailSetEntryId),
+					}),
+				)
+				await insertEntity(createTestEntity(MailSetEntryTypeRef, { _id: mailSetEntryId, mail: mailId }))
+				await insertEntity(createTestEntity(MailTypeRef, { _id: mailId, mailDetails: mailDetailsBlobId, sets: [mailSetEntryId] }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: mailDetailsBlobId, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertRange(
+					MailSetEntryTypeRef,
+					listIdPart(mailSetEntryId),
+					lowerMailSetEntryIdBeforeTimeRangeDays,
+					upperMailSetEntryIdBeforeTimeRangeDays,
+				)
+				await insertRange(MailTypeRef, mailListId, lowerBeforeTimeRangeDays, upperBeforeTimeRangeDays)
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
@@ -211,21 +427,44 @@ o.spec("OfflineStorage", function () {
 				o(allRanges).deepEquals([])
 				const allMails = await getAllIdsForType(MailTypeRef)
 				o(allMails).deepEquals([])
-				const allDraftDetails = await getAllIdsForType(MailDetailsDraftTypeRef)
-				o(allDraftDetails).deepEquals([])
+				const allMailSetEntries = await getAllIdsForType(MailSetEntryTypeRef)
+				o(allMailSetEntries).deepEquals([])
+				const allBlobDetails = await getAllIdsForType(MailDetailsBlobTypeRef)
+				o(allBlobDetails).deepEquals([])
 			})
+		})
 
-			o("old ranges will be deleted (blob details)", async function () {
-				// create tables
+		// we should refactor these tests once all mailboxes are migrated to the new MailSet architecture
+		o.spec("Clearing excluded data for Non-MailSet mailbox", function () {
+			const spamFolderId = "spamFolder"
+			const trashFolderId = "trashFolder"
+			const spamListId = "spamList"
+			const trashListId = "trashList"
+			const listId = "listId"
+			const mailType = getTypeId(MailTypeRef)
+
+			o.beforeEach(async function () {
 				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
 
-				const upper = offsetId(-1)
-				const lower = offsetId(-2)
+				await insertEntity(
+					createTestEntity(MailBoxTypeRef, { _id: "mailboxId", currentMailBag: null, folders: createMailFolderRef({ folders: "mailFolderList" }) }),
+				)
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", spamFolderId], mails: spamListId, folderType: MailSetKind.SPAM }),
+				)
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", trashFolderId], mails: trashListId, folderType: MailSetKind.TRASH }),
+				)
+			})
+
+			o("ranges before timeRangeDays will be deleted", async function () {
+				const upperBeforeTimeRangeDays = offsetId(-1)
+				const lowerBeforeTimeRangeDays = offsetId(-2)
 				const mailDetailsBlobId: IdTuple = ["mailDetailsList", "mailDetailsBlobId"]
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "mailFolderId"], mails: listId }))
-				await insertEntity(createMailDetailsBlob({ _id: mailDetailsBlobId, details: createMailDetails() }))
-				await insertEntity(createMail({ _id: [listId, "anything"], mailDetails: mailDetailsBlobId }))
-				await insertRange(MailTypeRef, listId, lower, upper)
+				await insertEntity(createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "mailFolderId"], mails: listId }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: mailDetailsBlobId, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertEntity(createTestEntity(MailTypeRef, { _id: [listId, "anything"], mailDetails: mailDetailsBlobId }))
+				await insertRange(MailTypeRef, listId, lowerBeforeTimeRangeDays, upperBeforeTimeRangeDays)
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
@@ -241,8 +480,13 @@ o.spec("OfflineStorage", function () {
 			o("modified ranges will be shrunk", async function () {
 				const upper = offsetId(2)
 				const lower = offsetId(-2)
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-				await insertEntity(createMailFolder({ _id: ["mailFolderListId", "mailFolderId"], mails: listId }))
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, {
+						_id: ["mailFolderList", "mailFolderId"],
+						folderType: MailSetKind.INBOX,
+						mails: listId,
+					}),
+				)
 				await insertRange(MailTypeRef, listId, lower, upper)
 
 				// Here we clear the excluded data
@@ -256,8 +500,7 @@ o.spec("OfflineStorage", function () {
 				const upper = offsetId(2)
 				const lower = offsetId(1)
 
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "mailFolderId"], mails: listId }))
+				await insertEntity(createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "mailFolderId"], mails: listId }))
 				await insertRange(MailTypeRef, listId, lower, upper)
 
 				// Here we clear the excluded data
@@ -270,9 +513,8 @@ o.spec("OfflineStorage", function () {
 			o("complete ranges won't be lost if entities are all newer than cutoff", async function () {
 				const upper = offsetId(2)
 				const lower = GENERATED_MIN_ID
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-				const mail = createMail({ _id: [listId, offsetId(1)] })
-				const mailFolder = createMailFolder({ _id: ["mailFolderList", "folderId"], mails: listId })
+				const mail = createTestEntity(MailTypeRef, { _id: [listId, offsetId(1)] })
+				const mailFolder = createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "folderId"], mails: listId })
 				await insertEntity(mailFolder)
 				await insertEntity(mail)
 				await insertRange(MailTypeRef, listId, lower, upper)
@@ -284,65 +526,70 @@ o.spec("OfflineStorage", function () {
 				o(mapNullable(newRange, untagSqlObject)).deepEquals({ type: mailType, listId, lower, upper })
 
 				const allFolderIds = await getAllIdsForType(MailFolderTypeRef)
-				o(allFolderIds).deepEquals(["folderId"])
+				o(allFolderIds).deepEquals(["folderId", spamFolderId, trashFolderId])
 				const allMailIds = await getAllIdsForType(MailTypeRef)
 				o(allMailIds).deepEquals([getElementId(mail)])
 			})
 
-			o("legacy trash and spam is cleared", async function () {
-				const spamFolderId = "spamFolder"
-				const trashFolderId = "trashFolder"
-				const spamListId = "spamList"
-				const trashListId = "trashList"
-				const spamMailBodyId = "spamMailBodyId"
-				const trashMailBodyId = "trashMailBodyId"
+			o("trash and spam descendants are cleared", async function () {
+				const spamDetailsId: IdTuple = ["detailsListId", "spamDetailsId"]
+				const trashDetailsId: IdTuple = ["detailsListId", "trashDetailsId"]
+				const trashSubfolderDetailsId: IdTuple = ["detailsListId", "trashSubFolderDetailsId"]
+
+				const trashSubfolderId = "trashSubfolderId"
+				const trashSubfolderListId = "trashSubfolderListId"
 
 				const spamMailId = offsetId(2)
-				const spamMail = createMail({ _id: [spamListId, spamMailId], body: spamMailBodyId })
+				const spamMail = createTestEntity(MailTypeRef, { _id: [spamListId, spamMailId], mailDetails: spamDetailsId })
 				const trashMailId = offsetId(2)
-				const trashMail = createMail({ _id: [trashListId, trashMailId], body: trashMailBodyId })
+				const trashMail = createTestEntity(MailTypeRef, { _id: [trashListId, trashMailId], mailDetails: trashDetailsId })
+				const trashSubfolderMailId = offsetId(2)
+				const trashSubfolderMail = createTestEntity(MailTypeRef, {
+					_id: [trashSubfolderListId, trashSubfolderMailId],
+					mailDetails: trashSubfolderDetailsId,
+				})
 
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", spamFolderId], mails: spamListId, folderType: MailFolderType.SPAM }))
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", trashFolderId], mails: trashListId, folderType: MailFolderType.TRASH }))
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, {
+						_id: ["mailFolderList", trashSubfolderId],
+						parentFolder: ["mailFolderList", trashFolderId],
+						mails: trashSubfolderListId,
+						folderType: MailSetKind.CUSTOM,
+					}),
+				)
 				await insertEntity(spamMail)
 				await insertEntity(trashMail)
-				await insertEntity(createMailBody({ _id: spamMailBodyId }))
-				await insertEntity(createMailBody({ _id: trashMailBodyId }))
+				await insertEntity(trashSubfolderMail)
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: spamDetailsId, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: trashDetailsId, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: trashSubfolderDetailsId, details: createTestEntity(MailDetailsTypeRef) }))
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
 
 				const allEntities = await dbFacade.all("select * from list_entities", [])
-				o(allEntities.map((r) => r.elementId.value)).deepEquals([spamFolderId, trashFolderId])
+				o(allEntities.map((r) => r.elementId.value)).deepEquals([spamFolderId, trashFolderId, trashSubfolderId])
 
-				o(await getAllIdsForType(MailFolderTypeRef)).deepEquals([spamFolderId, trashFolderId])
+				o(await getAllIdsForType(MailFolderTypeRef)).deepEquals([spamFolderId, trashFolderId, trashSubfolderId])
 				o(await getAllIdsForType(MailTypeRef)).deepEquals([])
-				o(await getAllIdsForType(MailBodyTypeRef)).deepEquals([])
+				o(await getAllIdsForType(MailDetailsBlobTypeRef)).deepEquals([])
 			})
 
-			o("trash and spam is cleared", async function () {
-				const spamFolderId = "spamFolder"
-				const trashFolderId = "trashFolder"
-				const spamListId = "spamList"
-				const trashListId = "trashList"
+			o("trash and spam are cleared", async function () {
 				const spamDetailsId: IdTuple = ["detailsListId", "spamDetailsId"]
 				const trashDetailsId: IdTuple = ["detailsListId", "trashDetailsId"]
 
 				const spamMailId = offsetId(2)
 				const trashMailId = offsetId(2)
-				const spamMail = createMail({ _id: [spamListId, spamMailId], mailDetails: spamDetailsId })
-				const trashMail = createMail({ _id: [trashListId, trashMailId], mailDetails: trashDetailsId })
+				const spamMail = createTestEntity(MailTypeRef, { _id: [spamListId, spamMailId], mailDetails: spamDetailsId })
+				const trashMail = createTestEntity(MailTypeRef, { _id: [trashListId, trashMailId], mailDetails: trashDetailsId })
 
 				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
 
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", spamFolderId], mails: spamListId, folderType: MailFolderType.SPAM }))
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", trashFolderId], mails: trashListId, folderType: MailFolderType.TRASH }))
 				await insertEntity(spamMail)
 				await insertEntity(trashMail)
-				await insertEntity(createMailDetailsBlob({ _id: spamDetailsId, details: createMailDetails() }))
-				await insertEntity(createMailDetailsBlob({ _id: trashDetailsId, details: createMailDetails() }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: spamDetailsId, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: trashDetailsId, details: createTestEntity(MailDetailsTypeRef) }))
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
@@ -356,73 +603,85 @@ o.spec("OfflineStorage", function () {
 			})
 
 			o("normal folder is partially cleared", async function () {
+				const beforeMailDetailsId: IdTuple = ["detailsListId", "beforeDetailsId"]
+				const afterMailDetailsId: IdTuple = ["detailsListId", "afterDetailsId"]
+
 				const inboxMailList = "inboxMailList"
-				const beforeMailBodyId = "beforeMailBodyId"
-				const afterMailBodyId = "afterMailBodyId"
 
-				const mailBefore = createMail({ _id: [inboxMailList, offsetId(-2)], body: beforeMailBodyId })
-				const mailAfter = createMail({ _id: [inboxMailList, offsetId(2)], body: afterMailBodyId })
+				const mailBefore = createTestEntity(MailTypeRef, { _id: [inboxMailList, offsetId(-2)], mailDetails: beforeMailDetailsId })
+				const mailAfter = createTestEntity(MailTypeRef, { _id: [inboxMailList, offsetId(2)], mailDetails: afterMailDetailsId })
+				const beforeMailDetails = createTestEntity(MailDetailsBlobTypeRef, { _id: beforeMailDetailsId, details: createTestEntity(MailDetailsTypeRef) })
+				const afterMailDetails = createTestEntity(MailDetailsBlobTypeRef, { _id: afterMailDetailsId, details: createTestEntity(MailDetailsTypeRef) })
 
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailFolderType.INBOX }))
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailSetKind.INBOX }),
+				)
 				await insertEntity(mailBefore)
 				await insertEntity(mailAfter)
-				await insertEntity(createMailBody({ _id: beforeMailBodyId }))
-				await insertEntity(createMailBody({ _id: afterMailBodyId }))
+				await insertEntity(beforeMailDetails)
+				await insertEntity(afterMailDetails)
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
 
 				const allMailIds = await getAllIdsForType(MailTypeRef)
 				o(allMailIds).deepEquals([getElementId(mailAfter)])
-				const allMailBodyIds = await getAllIdsForType(MailBodyTypeRef)
-				o(allMailBodyIds).deepEquals([afterMailBodyId])
+				const allMailDetailsIds = await getAllIdsForType(MailDetailsBlobTypeRef)
+				o(allMailDetailsIds).deepEquals([getElementId(afterMailDetails)])
 			})
 
 			o("normal folder is completely cleared", async function () {
+				const mailDetailsId1: IdTuple = ["detailsListId", "mailDetailsId1"]
+				const mailDetailsId2: IdTuple = ["detailsListId", "mailDetailsId2"]
+
 				const inboxMailList = "inboxMailList"
-				const mailBodyId1 = "mailBodyId1"
-				const mailBodyId2 = "afterMailBodyId"
 
-				const mail1 = createMail({ _id: [inboxMailList, offsetId(-2)], body: mailBodyId1 })
-				const mail2 = createMail({ _id: [inboxMailList, offsetId(-3)], body: mailBodyId2 })
+				const mail1 = createTestEntity(MailTypeRef, { _id: [inboxMailList, offsetId(-2)], mailDetails: mailDetailsId1 })
+				const mail2 = createTestEntity(MailTypeRef, { _id: [inboxMailList, offsetId(-3)], mailDetails: mailDetailsId2 })
 
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailFolderType.INBOX }))
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailSetKind.INBOX }),
+				)
 				await insertEntity(mail1)
 				await insertEntity(mail2)
-				await insertEntity(createMailBody({ _id: mailBodyId1 }))
-				await insertEntity(createMailBody({ _id: mailBodyId2 }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: mailDetailsId1, details: createTestEntity(MailDetailsTypeRef) }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: mailDetailsId2, details: createTestEntity(MailDetailsTypeRef) }))
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
 
 				o(await getAllIdsForType(MailTypeRef)).deepEquals([])
-				o(await getAllIdsForType(MailBodyTypeRef)).deepEquals([])
+				o(await getAllIdsForType(MailDetailsBlobTypeRef)).deepEquals([])
 			})
 
 			o("when mail is deleted, attachment is also deleted", async function () {
 				const inboxMailList = "inboxMailList"
-				const beforeMailBodyId = "beforeMailBodyId"
-				const afterMailBodyId = "afterMailBodyId"
+				const beforeMailDetailsId: IdTuple = ["detailsListId", "beforeDetailsId"]
+				const afterMailDetailsId: IdTuple = ["detailsListId", "afterDetailsId"]
 				const fileListId = "fileListId"
 
-				const fileBefore = createFile({ _id: [fileListId, "fileBefore"] })
-				const fileAfter = createFile({ _id: [fileListId, "fileAfter"] })
-				const mailBefore = createMail({ _id: [inboxMailList, offsetId(-2)], body: beforeMailBodyId, attachments: [fileBefore._id] })
-				const mailAfter = createMail({ _id: [inboxMailList, offsetId(2)], body: afterMailBodyId, attachments: [fileAfter._id] })
+				const fileBefore = createTestEntity(FileTypeRef, { _id: [fileListId, "fileBefore"] })
+				const fileAfter = createTestEntity(FileTypeRef, { _id: [fileListId, "fileAfter"] })
+				const mailBefore = createTestEntity(MailTypeRef, {
+					_id: [inboxMailList, offsetId(-2)],
+					mailDetails: beforeMailDetailsId,
+					attachments: [fileBefore._id],
+				})
+				const mailAfter = createTestEntity(MailTypeRef, {
+					_id: [inboxMailList, offsetId(2)],
+					mailDetails: afterMailDetailsId,
+					attachments: [fileAfter._id],
+				})
 
-				await storage.init({ userId, databaseKey, timeRangeDays, forceNewDatabase: false })
-
-				await insertEntity(createMailFolder({ _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailFolderType.INBOX }))
+				await insertEntity(
+					createTestEntity(MailFolderTypeRef, { _id: ["mailFolderList", "folderId"], mails: inboxMailList, folderType: MailSetKind.INBOX }),
+				)
 				await insertEntity(mailBefore)
 				await insertEntity(mailAfter)
 				await insertEntity(fileBefore)
 				await insertEntity(fileAfter)
-				await insertEntity(createMailBody({ _id: beforeMailBodyId }))
-				await insertEntity(createMailBody({ _id: afterMailBodyId }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: beforeMailDetailsId }))
+				await insertEntity(createTestEntity(MailDetailsBlobTypeRef, { _id: afterMailDetailsId }))
 
 				// Here we clear the excluded data
 				await storage.clearExcludedData(timeRangeDays, userId)
@@ -434,27 +693,30 @@ o.spec("OfflineStorage", function () {
 	})
 
 	o.spec("Integration test", function () {
-		function createMailList(numMails, listId, idGenerator, getSubject, getBody): { mails: Array<Mail>; mailBodies: Array<MailBody> } {
+		function createMailList(numMails, listId, idGenerator, getSubject, getBody): { mails: Array<Mail>; mailDetailsBlobs: Array<MailDetailsBlob> } {
 			const mails: Array<Mail> = []
-			const mailBodies: Array<MailBody> = []
+			const mailDetailsBlobs: Array<MailDetailsBlob> = []
 			for (let i = 0; i < numMails; ++i) {
 				const mailId = idGenerator.getNext()
-				const bodyId = idGenerator.getNext()
+				const mailDetailsId = idGenerator.getNext()
 				mails.push(
-					createMail({
+					createTestEntity(MailTypeRef, {
 						_id: [listId, mailId],
 						subject: getSubject(i),
-						body: bodyId,
+						mailDetails: ["detailsListId", mailDetailsId],
 					}),
 				)
-				mailBodies.push(
-					createMailBody({
-						_id: bodyId,
-						text: getBody(i),
+				mailDetailsBlobs.push(
+					createTestEntity(MailDetailsBlobTypeRef, {
+						_id: ["detailsListId", mailDetailsId],
+						details: createTestEntity(MailDetailsTypeRef, {
+							_id: mailDetailsId,
+							body: createTestEntity(BodyTypeRef, { text: getBody(i) }),
+						}),
 					}),
 				)
 			}
-			return { mails, mailBodies }
+			return { mails, mailDetailsBlobs: mailDetailsBlobs }
 		}
 
 		o("cleanup works as expected", async function () {
@@ -462,13 +724,19 @@ o.spec("OfflineStorage", function () {
 			const oldIds = new IdGenerator(offsetId(-5))
 			const newIds = new IdGenerator(offsetId(5))
 
-			const inboxListId = oldIds.getNext()
-			const inboxFolder = createMailFolder({
-				_id: [userId, oldIds.getNext()],
-				mails: inboxListId,
-				folderType: MailFolderType.INBOX,
+			const userMailbox = createTestEntity(MailBoxTypeRef, {
+				_id: "mailboxId",
+				currentMailBag: null,
+				folders: createMailFolderRef({ folders: "mailFolderList" }),
 			})
-			const { mails: oldInboxMails, mailBodies: oldInboxMailBodies } = createMailList(
+
+			const inboxListId = oldIds.getNext()
+			const inboxFolder = createTestEntity(MailFolderTypeRef, {
+				_id: ["mailFolderList", oldIds.getNext()],
+				mails: inboxListId,
+				folderType: MailSetKind.INBOX,
+			})
+			const { mails: oldInboxMails, mailDetailsBlobs: oldInboxMailDetailsBlobs } = createMailList(
 				3,
 				inboxListId,
 				oldIds,
@@ -476,7 +744,7 @@ o.spec("OfflineStorage", function () {
 				(i) => `old body ${i}`,
 			)
 
-			const { mails: newInboxMails, mailBodies: newInboxMailBodies } = createMailList(
+			const { mails: newInboxMails, mailDetailsBlobs: newInboxMailDetailsBlobs } = createMailList(
 				3,
 				inboxListId,
 				newIds,
@@ -485,12 +753,12 @@ o.spec("OfflineStorage", function () {
 			)
 
 			const trashListId = oldIds.getNext()
-			const trashFolder = createMailFolder({
-				_id: [userId, oldIds.getNext()],
+			const trashFolder = createTestEntity(MailFolderTypeRef, {
+				_id: ["mailFolderList", oldIds.getNext()],
 				mails: trashListId,
-				folderType: MailFolderType.TRASH,
+				folderType: MailSetKind.TRASH,
 			})
-			const { mails: trashMails, mailBodies: trashMailBodies } = createMailList(
+			const { mails: trashMails, mailDetailsBlobs: trashMailDetailsBlobs } = createMailList(
 				3,
 				trashListId,
 				newIds,
@@ -498,15 +766,24 @@ o.spec("OfflineStorage", function () {
 				(i) => `trash body ${i}`,
 			)
 
+			const spamListId = oldIds.getNext()
+			const spamFolder = createTestEntity(MailFolderTypeRef, {
+				_id: ["mailFolderList", oldIds.getNext()],
+				mails: spamListId,
+				folderType: MailSetKind.SPAM,
+			})
+
 			const everyEntity = [
+				userMailbox,
 				inboxFolder,
 				trashFolder,
+				spamFolder,
 				...oldInboxMails,
-				...oldInboxMailBodies,
+				...oldInboxMailDetailsBlobs,
 				...newInboxMails,
-				...newInboxMailBodies,
+				...newInboxMailDetailsBlobs,
 				...trashMails,
-				...trashMailBodies,
+				...trashMailDetailsBlobs,
 			]
 
 			await storage.init({ userId, databaseKey: offlineDatabaseTestKey, timeRangeDays, forceNewDatabase: false })
@@ -527,14 +804,14 @@ o.spec("OfflineStorage", function () {
 			}
 
 			await promiseMap(oldInboxMails, (mail) => assertContents(mail, null, `old mail ${mail._id} was deleted`))
-			await promiseMap(oldInboxMailBodies, (body) => assertContents(body, null, `old mailBody ${body._id} was deleted`))
+			await promiseMap(oldInboxMailDetailsBlobs, (body) => assertContents(body, null, `old mailBody ${body._id} was deleted`))
 
 			await promiseMap(newInboxMails, (mail) => assertContents(mail, mail, `new mail ${mail._id} was not deleted`))
-			await promiseMap(newInboxMailBodies, (body) => assertContents(body, body, `new mailBody ${body._id} was not deleted`))
+			await promiseMap(newInboxMailDetailsBlobs, (body) => assertContents(body, body, `new mailBody ${body._id} was not deleted`))
 
 			// All of trash should be cleared, even though the ids are old
 			await promiseMap(trashMails, (mail) => assertContents(mail, null, `trash mail ${mail._id} was deleted`))
-			await promiseMap(trashMailBodies, (body) => assertContents(body, null, `trash mailBody ${body._id} was deleted`))
+			await promiseMap(trashMailDetailsBlobs, (body) => assertContents(body, null, `trash mailBody ${body._id} was deleted`))
 
 			await assertContents(inboxFolder, inboxFolder, `inbox folder was not deleted`)
 			await assertContents(trashFolder, trashFolder, `trash folder was not deleted`)

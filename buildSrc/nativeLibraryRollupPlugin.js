@@ -1,77 +1,71 @@
-import fs from "fs"
-import path from "path"
-import { getNativeLibModulePath } from "./nativeLibraryProvider.js"
+import fs from "node:fs"
+import path from "node:path"
+import { getNativeLibModulePaths } from "./nativeLibraryProvider.js"
+import { normalizeCopyTarget, removeNpmNamespacePrefix } from "./buildUtils.js"
 
-/**
- * Rollup plugin which injects path to better-sqlite3 native code.
- * See DesktopMain.
- */
-export function sqliteNativeBannerPlugin({ environment, rootDir, dstPath, nativeBindingPath, platform }, log = console.log.bind(console)) {
+/** copy either a fresh build or a cached version of a native module for the platform client being built into the build directory.*/
+export function copyNativeModulePlugin({ rootDir, dstPath, platform, architecture, nodeModule }, log = console.log.bind(console)) {
 	return {
-		name: "sqlite-native-banner-plugin",
+		name: "copy-native-module-plugin",
 		async buildStart() {
-			const modulePath = await getNativeLibModulePath({
-				nodeModule: "better-sqlite3",
-				environment,
+			const modulePaths = await getNativeLibModulePaths({
+				nodeModule,
+				environment: "electron",
 				rootDir,
 				log,
 				platform,
-				copyTarget: "better_sqlite3",
+				architecture,
+				copyTarget: normalizeCopyTarget(nodeModule),
 			})
-			const normalDst = path.normalize(dstPath)
-			const dstDir = path.dirname(normalDst)
-			await fs.promises.mkdir(dstDir, { recursive: true })
-			await fs.promises.copyFile(modulePath, normalDst)
-		},
-		banner() {
-			const nativeLibPath = nativeBindingPath ?? dstPath
-			return `
-			globalThis.buildOptions = globalThis.buildOptions ?? {}
-			globalThis.buildOptions.sqliteNativePath = "${nativeLibPath}";
-			`
+			for (let [architecture, modulePath] of Object.entries(modulePaths)) {
+				if (nodeModule === "@tutao/node-mimimi") {
+					architecture = getMimimiArchitecture(platform, architecture)
+				}
+				const normalDst = path.join(path.normalize(dstPath), `${removeNpmNamespacePrefix(nodeModule)}.${platform}-${architecture}.node`)
+				const dstDir = path.dirname(normalDst)
+				await fs.promises.mkdir(dstDir, { recursive: true })
+				await fs.promises.copyFile(modulePath, normalDst)
+			}
 		},
 	}
 }
 
 /**
- * Rollup plugin which injects path to better-sqlite3 native code.
+ * napi appends abi to the architecture (see https://napi.rs/docs/cli/napi-config)
+ */
+function getMimimiArchitecture(platform, architecture) {
+	if (platform === "linux") {
+		return architecture + "-gnu"
+	} else if (platform === "win32") {
+		return architecture + "-msvc"
+	}
+	return architecture
+}
+
+/**
+ * Rollup plugin which injects paths to the native code libraries.
+ *
+ * we're using some self-built native node modules, namely better-sqlite3.
+ * these need to be bundled into the client.
+ * better-sqlite3 has a way of getting its native module loaded:
+ * it exports a class whose constructor takes a path to the native module which is then required dynamically.
+ *
  * See DesktopMain.
  */
-export function keytarNativePlugin({ rootDir, platform }, log = console.log.bind(console)) {
-	let outputPath
+export function nativeSqlBannerPlugin(log = console.log.bind(console)) {
+	// th path is Relative to the source file from which the .node file is loaded.
+	// In our case it will be desktop/DesktopMain.js, which is located in the same directory.
+	// This depends on the changes we made in our own fork of better_sqlite3.
+	// It's okay to use forward slash here, it is passed to require which can deal with it.
 	return {
-		name: "keytar-native-banner-plugin",
-		async buildStart() {
-			outputPath = await getNativeLibModulePath({
-				nodeModule: "keytar",
-				environment: "electron",
-				rootDir,
-				log,
-				platform,
-			})
-		},
-		resolveId(id) {
-			if (id.endsWith("keytar.node")) {
-				if (outputPath == null) {
-					throw new Error("Something didn't quite work")
-				}
-				return outputPath
-			}
-		},
-		async load(id) {
-			if (id === outputPath) {
-				const name = path.basename(id)
-				const content = await fs.promises.readFile(id)
-				this.emitFile({
-					type: "asset",
-					name,
-					fileName: name,
-					source: content,
-				})
-				return `
-				const nativeModule = require('./${name}')
-				export default nativeModule`
-			}
+		name: "native-banner-plugin",
+		banner() {
+			return `
+			globalThis.buildOptions = globalThis.buildOptions ?? {}
+			globalThis.buildOptions.sqliteNativePath = process.arch === "arm64"
+				? "./better-sqlite3." + process.platform + "-arm64.node"
+				: "./better-sqlite3." + process.platform + "-x64.node";
+			`
 		},
 	}
 }
