@@ -1,6 +1,6 @@
 {
 	"name": "@tutao/tutanota-utils",
-	"version": "3.107.3",
+	"version": "270.250213.0",
 	"license": "GPL-3.0",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -18,10 +18,11 @@
 	"files": [
 		"dist/*",
 		"README.md",
-		"LICENSE.txt"
+		"LICENSE.txt",
+		"tsconfig.json"
 	],
 	"devDependencies": {
-		"typescript": "4.5.4",
-		"ospec": "https://github.com/tutao/ospec.git#0472107629ede33be4c4d19e89f237a6d7b0cb11"
+		"typescript": "5.3.3",
+		"@tutao/otest": "270.250213.0"
 	}
 }

@@ -1,5 +1,6 @@
-import o from "ospec"
-import { _findMatches, _search, search } from "../../../../../src/api/common/utils/PlainTextSearch.js"
+import o from "@tutao/otest"
+import { _findMatches, _search, search } from "../../../../../src/common/api/common/utils/PlainTextSearch.js"
+
 o.spec("PlainTextSearchTest", function () {
 	const entryWithNestedArray1 = {
 		title: "Is my password strong enough?",
@@ -79,9 +80,9 @@ o.spec("PlainTextSearchTest", function () {
 			const searchResult = _search(query, _searchEntries, attributeNames, false)
 
 			o(searchResult[0].matchedWords.length).equals(3)
-			searchResult[0].matchedWords.forEach((match) => {
+			for (const match of searchResult[0].matchedWords) {
 				o(query.includes(match)).equals(true)
-			})
+			}
 		})
 		o("check if partialWordMatches count is correct", function () {
 			const query = ["their", "something", "tes", "randomness"]

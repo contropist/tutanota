@@ -1,9 +1,9 @@
-import o from "ospec"
-import { DeviceConfig, migrateConfig, migrateConfigV2to3 } from "../../../src/misc/DeviceConfig.js"
-import { PersistentCredentials } from "../../../src/misc/credentials/CredentialsProvider.js"
+import o from "@tutao/otest"
+import { DeviceConfig, DeviceConfigCredentials, ListAutoSelectBehavior, migrateConfig, migrateConfigV2to3 } from "../../../src/common/misc/DeviceConfig.js"
 import { matchers, object, when } from "testdouble"
 import { verify } from "@tutao/tutanota-test-utils"
-import { CredentialEncryptionMode } from "../../../src/misc/credentials/CredentialEncryptionMode.js"
+import { CredentialEncryptionMode } from "../../../src/common/misc/credentials/CredentialEncryptionMode.js"
+import { CredentialType } from "../../../src/common/misc/credentials/CredentialType.js"
 
 o.spec("DeviceConfig", function () {
 	o.spec("migrateConfig", function () {
@@ -28,24 +28,26 @@ o.spec("DeviceConfig", function () {
 
 			migrateConfigV2to3(oldConfig)
 
-			const expectedCredentialsAfterMigration: Record<string, Omit<PersistentCredentials, "databaseKey">> = {
+			const expectedCredentialsAfterMigration: Record<string, Omit<DeviceConfigCredentials, "databaseKey">> = {
 				internalUserId: {
 					credentialInfo: {
 						login: "internal@example.com",
 						userId: "internalUserId",
-						type: "internal",
+						type: CredentialType.Internal,
 					},
 					accessToken: "internalAccessToken",
 					encryptedPassword: "internalEncPassword",
+					encryptedPassphraseKey: null,
 				},
 				externalUserId: {
 					credentialInfo: {
 						login: "externalUserId",
 						userId: "externalUserId",
-						type: "external",
+						type: CredentialType.External,
 					},
 					accessToken: "externalAccessToken",
 					encryptedPassword: "externalEncPassword",
+					encryptedPassphraseKey: null,
 				},
 			}
 
@@ -86,8 +88,9 @@ o.spec("DeviceConfig", function () {
 				],
 				_credentialEncryptionMode: CredentialEncryptionMode.DEVICE_LOCK,
 				_encryptedCredentialsKey: "somekey",
+				acknowledgedNewsItems: [],
 				_themeId: "mytheme",
-				_scheduledAlarmUsers: ["userId"],
+				scheduledAlarmModelVersionPerUser: {},
 				_language: "en",
 				_defaultCalendarView: {},
 				_hiddenCalendars: {},
@@ -96,6 +99,16 @@ o.spec("DeviceConfig", function () {
 				_testAssignments: null,
 				_signupToken: "signupToken",
 				offlineTimeRangeDaysByUser: { userId1: 42 },
+				conversationViewShowOnlySelectedMail: false,
+				syncContactsWithPhonePreference: {},
+				isCalendarDaySelectorExpanded: false,
+				mailAutoSelectBehavior: ListAutoSelectBehavior.OLDER,
+				isSetupComplete: true,
+				lastExternalCalendarSync: {},
+				clientOnlyCalendars: new Map(),
+				events: [],
+				lastRatingPromptedDate: null,
+				retryRatingPromptAfter: null,
 			}
 
 			when(localStorageMock.getItem(DeviceConfig.LocalStorageKey)).thenReturn(JSON.stringify(storedInLocalStorage))
@@ -118,8 +131,11 @@ o.spec("DeviceConfig", function () {
 						},
 						accessToken: "internalAccessToken",
 						encryptedPassword: "internalEncPassword",
+						encryptedPassphraseKey: null,
 					},
 				},
+				isSetupComplete: true,
+				isCredentialsMigratedToNative: false,
 			})
 
 			// We can't just call verify on localStorageMock.setItem because the JSON string may not match perfectly

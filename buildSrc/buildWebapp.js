@@ -3,16 +3,18 @@
  */
 import { rollup } from "rollup"
 import typescript from "@rollup/plugin-typescript"
-import { terser } from "rollup-plugin-terser"
-import path from "path"
+import terser from "@rollup/plugin-terser"
+import path from "node:path"
 import { nodeResolve } from "@rollup/plugin-node-resolve"
 import commonjs from "@rollup/plugin-commonjs"
 import fs from "fs-extra"
 import { bundleDependencyCheckPlugin, getChunkName, resolveLibs } from "./RollupConfig.js"
-import { visualizer } from "rollup-plugin-visualizer"
-import os from "os"
+import os from "node:os"
 import * as env from "./env.js"
 import { createHtml } from "./createHtml.js"
+import { domainConfigs } from "./DomainConfigs.js"
+import { visualizer } from "rollup-plugin-visualizer"
+import { rollupWasmLoader } from "@tutao/tuta-wasm-loader"
 
 /**
  * Builds the web app for production.
@@ -22,12 +24,23 @@ import { createHtml } from "./createHtml.js"
  * @param measure Function that returns the current elapsed build time.
  * @param minify Boolean. Set to true to perform minification.
  * @param projectDir Path to the tutanota root directory.
+ * @param app App to build, 'mail' for mail app and 'calendar' for calendar app
  * @returns Nothing meaningful.
  */
 
-export async function buildWebapp({ version, stage, host, measure, minify, projectDir }) {
+export async function buildWebapp({ version, stage, host, measure, minify, projectDir, app }) {
+	const isCalendarApp = app === "calendar"
+	const tsConfig = isCalendarApp ? "tsconfig-calendar-app.json" : "tsconfig.json"
+	const buildDir = isCalendarApp ? "build-calendar-app" : "build"
+	const resolvedBuildDir = path.resolve(buildDir)
+	const entryFile = isCalendarApp ? "src/calendar-app/calendar-app.ts" : "src/mail-app/app.ts"
+	const workerFile = isCalendarApp ? "src/calendar-app/workerUtils/worker/calendar-worker.ts" : "src/mail-app/workerUtils/worker/mail-worker.ts"
+	const builtWorkerFile = isCalendarApp ? "calendar-worker.js" : "mail-worker.js"
+
+	console.log("Building app", app)
+
 	console.log("started cleaning", measure())
-	await fs.emptyDir("build")
+	await fs.emptyDir(buildDir)
 
 	console.log("bundling polyfill", measure())
 	const polyfillBundle = await rollup({
@@ -35,47 +48,74 @@ export async function buildWebapp({ version, stage, host, measure, minify, proje
 		plugins: [
 			typescript(),
 			minify && terser(),
-			{
-				name: "append-libs",
-				resolveId(id) {
-					if (id === "systemjs") {
-						return path.resolve("libs/s.js")
-					}
-				},
-			},
-			// nodeResolve is for oxmsg and our own modules
-			nodeResolve(),
+			// nodeResolve is for our own modules
+			nodeResolve({
+				preferBuiltins: true,
+				resolveOnly: [/^@tutao\/.*$/],
+			}),
 			commonjs(),
 		],
 	})
 	await polyfillBundle.write({
 		sourcemap: false,
 		format: "iife",
-		file: "build/dist/polyfill.js",
+		file: `${buildDir}/polyfill.js`,
 	})
 
 	console.log("started copying images", measure())
-	await fs.copy(path.join(projectDir, "/resources/images"), path.join(projectDir, "/build/dist/images"))
-	await fs.copy(path.join(projectDir, "/resources/favicon"), path.join(projectDir, "build/dist/images"))
-	await fs.copy(path.join(projectDir, "/resources/wordlibrary.json"), path.join(projectDir, "build/dist/wordlibrary.json"))
-	await fs.copy(path.join(projectDir, "/src/braintree.html"), path.join(projectDir, "/build/dist/braintree.html"))
+	await fs.copy(path.join(projectDir, "/resources/images"), path.join(projectDir, `/${buildDir}/images`))
+	await fs.copy(path.join(projectDir, "/resources/favicon"), path.join(projectDir, `${buildDir}/images`))
+	await fs.copy(path.join(projectDir, "/resources/pdf"), path.join(projectDir, `${buildDir}/pdf`))
+	await fs.copy(path.join(projectDir, "/resources/wordlibrary.json"), path.join(projectDir, `${buildDir}/wordlibrary.json`))
+	await fs.copy(path.join(projectDir, "/src/braintree.html"), path.join(projectDir, `/${buildDir}/braintree.html`))
 
 	console.log("started bundling", measure())
 	const bundle = await rollup({
-		input: ["src/app.ts", "src/api/worker/worker.ts"],
+		input: [entryFile, workerFile],
 		preserveEntrySignatures: false,
 		perf: true,
 		plugins: [
-			typescript({}),
+			typescript({
+				tsconfig: tsConfig,
+			}),
 			resolveLibs(),
 			commonjs({
 				exclude: "src/**",
 			}),
 			minify && terser(),
-			analyzer(projectDir),
-			visualizer({ filename: "build/stats.html", gzipSize: true }),
+			analyzer(projectDir, buildDir),
+			visualizer({ filename: `${buildDir}/stats.html`, gzipSize: true }),
 			bundleDependencyCheckPlugin(),
-			nodeResolve(),
+			nodeResolve({
+				preferBuiltins: true,
+				resolveOnly: [/^@tutao\/.*$/],
+			}),
+			rollupWasmLoader({
+				webassemblyLibraries: [
+					{
+						name: "liboqs.wasm",
+						command: "make -f Makefile_liboqs build",
+						workingDir: "libs/webassembly/",
+						outputPath: path.join(resolvedBuildDir, "wasm/liboqs.wasm"),
+						fallback: {
+							command: "make -f Makefile_liboqs fallback",
+							workingDir: "libs/webassembly/",
+							outputPath: path.join(resolvedBuildDir, "wasm/liboqs.js"),
+						},
+					},
+					{
+						name: "argon2.wasm",
+						command: "make -f Makefile_argon2 build fallback",
+						workingDir: "libs/webassembly/",
+						outputPath: path.join(resolvedBuildDir, "wasm/argon2.wasm"),
+						fallback: {
+							command: "make -f Makefile_argon2 fallback",
+							workingDir: "libs/webassembly/",
+							outputPath: path.join(resolvedBuildDir, "wasm/argon2.js"),
+						},
+					},
+				],
+			}),
 		],
 	})
 
@@ -83,11 +123,11 @@ export async function buildWebapp({ version, stage, host, measure, minify, proje
 	for (let [k, v] of Object.entries(bundle.getTimings())) {
 		console.log(k, v[0])
 	}
-	console.log("started writing bundles", measure())
+	console.log("started writing bundles into", buildDir, measure())
 	const output = await bundle.write({
 		sourcemap: true,
-		format: "system",
-		dir: "build/dist",
+		format: "esm",
+		dir: buildDir,
 		manualChunks(id, { getModuleInfo, getModuleIds }) {
 			return getChunkName(id, { getModuleInfo })
 		},
@@ -100,22 +140,16 @@ export async function buildWebapp({ version, stage, host, measure, minify, proje
 	// we have to use System.import here because bootstrap is not executed until we actually import()
 	// unlike nollup+es format where it just runs on being loaded like you expect
 	await fs.promises.writeFile(
-		"build/dist/worker-bootstrap.js",
-		`importScripts("./polyfill.js")
-const importPromise = System.import("./worker.js")
-self.onmessage = function (msg) {
-	importPromise.then(function () {
-		self.onmessage(msg)
-	})
-}
-`,
+		`${buildDir}/worker-bootstrap.js`,
+		`import "./polyfill.js"
+import "./${builtWorkerFile}"`,
 	)
 
 	let restUrl
 	if (stage === "test") {
-		restUrl = "https://test.tutanota.com"
+		restUrl = "https://app.test.tuta.com"
 	} else if (stage === "prod") {
-		restUrl = "https://mail.tutanota.com"
+		restUrl = "https://app.tuta.com"
 	} else if (stage === "local") {
 		restUrl = "http://" + os.hostname() + ":9000"
 	} else if (stage === "release") {
@@ -130,16 +164,18 @@ self.onmessage = function (msg) {
 			version,
 			mode: "Browser",
 			dist: true,
+			domainConfigs,
 		}),
+		app,
 	)
 	if (stage !== "release") {
-		await createHtml(env.create({ staticUrl: restUrl, version, mode: "App", dist: true }))
+		await createHtml(env.create({ staticUrl: restUrl, version, mode: "App", dist: true, domainConfigs }), app)
 	}
 
-	await bundleServiceWorker(chunks, version, minify)
+	await bundleServiceWorker(chunks, version, minify, buildDir)
 }
 
-async function bundleServiceWorker(bundles, version, minify) {
+async function bundleServiceWorker(bundles, version, minify, buildDir) {
 	const customDomainFileExclusions = ["index.html", "index.js"]
 	const filesToCache = ["index.js", "index.html", "polyfill.js", "worker-bootstrap.js"]
 		// we always include English
@@ -151,9 +187,9 @@ async function bundleServiceWorker(bundles, version, minify) {
 					(!it.startsWith("translation") && !it.startsWith("native-main") && !it.startsWith("SearchInPageOverlay")),
 			),
 		)
-		.concat(["images/logo-favicon.png", "images/logo-favicon-152.png", "images/logo-favicon-196.png", "images/ionicons.ttf"])
+		.concat(["images/logo-favicon.png", "images/logo-favicon-152.png", "images/logo-favicon-196.png", "images/font.ttf"])
 	const swBundle = await rollup({
-		input: ["src/serviceworker/sw.ts"],
+		input: ["src/common/serviceworker/sw.ts"],
 		plugins: [
 			typescript(),
 			minify && terser(),
@@ -170,7 +206,7 @@ async function bundleServiceWorker(bundles, version, minify) {
 	await swBundle.write({
 		sourcemap: true,
 		format: "iife",
-		file: "build/dist/sw.js",
+		file: `${buildDir}/sw.js`,
 	})
 }
 
@@ -179,7 +215,7 @@ async function bundleServiceWorker(bundles, version, minify) {
  *  - Print out each chunk size and contents
  *  - Create a graph file with chunk dependencies.
  */
-function analyzer(projectDir) {
+function analyzer(projectDir, buildDir) {
 	return {
 		name: "analyze",
 		async generateBundle(outOpts, bundle) {
@@ -187,26 +223,28 @@ function analyzer(projectDir) {
 			let buffer = "digraph G {\n"
 			buffer += "edge [dir=back]\n"
 
-			for (const [key, value] of Object.entries(bundle)) {
-				if (key.startsWith("translation")) continue
-				for (const dep of value.imports) {
+			for (const [fileName, info] of Object.entries(bundle)) {
+				if (fileName.startsWith("translation")) continue
+				// https://www.rollupjs.org/plugin-development/#generatebundle
+				if (info.type === "asset") continue
+				for (const dep of info.imports) {
 					if (!dep.includes("translation")) {
-						buffer += `"${dep}" -> "${key}"\n`
+						buffer += `"${dep}" -> "${fileName}"\n`
 					}
 				}
 
-				console.log(key, "", value.code.length / 1024 + "K")
-				for (const module of Object.keys(value.modules)) {
-					if (module.includes("src/api/entities")) {
+				console.log(fileName, "", info.code.length / 1024 + "K")
+				for (const module of Object.keys(info.modules)) {
+					if (module.includes("src/common/api/entities")) {
 						continue
 					}
 					const moduleName = module.startsWith(prefix) ? module.substring(prefix.length) : module
-					console.log("" + moduleName)
+					console.log("\t" + moduleName)
 				}
 			}
 
 			buffer += "}\n"
-			await fs.writeFile("build/bundles.dot", buffer)
+			await fs.writeFile(`${buildDir}/bundles.dot`, buffer)
 		},
 	}
 }

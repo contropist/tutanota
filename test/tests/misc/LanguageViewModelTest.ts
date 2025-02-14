@@ -1,7 +1,8 @@
-import o from "ospec"
-import { getSubstitutedLanguageCode, getAvailableLanguageCode, lang } from "../../../src/misc/LanguageViewModel.js"
+import o from "@tutao/otest"
+import { getAvailableLanguageCode, getSubstitutedLanguageCode, lang } from "../../../src/common/misc/LanguageViewModel.js"
 // @ts-ignore[untyped-import]
-import en from "../../../src/translations/en.js"
+import en from "../../../src/mail-app/translations/en.js"
+
 o.spec("LanguageViewModelTests", function () {
 	o(
 		"en is default language",
@@ -12,7 +13,7 @@ o.spec("LanguageViewModelTests", function () {
 		}),
 	)
 	o("getAvailableLanguage", function () {
-		;[
+		const cases = [
 			["en", "en"],
 			["zh_CN", "zh"],
 			["zh_Hant", "zh_hant"],
@@ -26,7 +27,8 @@ o.spec("LanguageViewModelTests", function () {
 			["pt_br", "pt_br"],
 			["fi", "fi"],
 			["fa", "fa_ir"],
-		].forEach(([k, r]) => o(getAvailableLanguageCode(k)).equals(r))
+		]
+		for (const [k, r] of cases) o(getAvailableLanguageCode(k)).equals(r)
 	})
 	o("_getSubstitutedLanguageCode", function () {
 		const cases: [string, string | null][] = [

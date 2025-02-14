@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import {
 	arrayEquals,
 	arrayEqualsWithPredicate,
@@ -8,7 +8,6 @@ import {
 	deduplicate,
 	difference,
 	findLastIndex,
-	flat,
 	flatMap,
 	groupBy,
 	groupByAndMap,
@@ -18,7 +17,8 @@ import {
 	partitionAsync,
 	splitInChunks,
 	symmetricDifference,
-} from "../lib/ArrayUtils.js"
+} from "../lib/index.js"
+import { compare } from "../lib/ArrayUtils.js"
 
 type ObjectWithId = {
 	v: number
@@ -664,23 +664,6 @@ o.spec("array utils", function () {
 			},
 		])
 	})
-	o("flat", function () {
-		o(flat([])).deepEquals([])
-		o(flat([[], [], []])).deepEquals([])
-		o(flat([[0, 1, 2, 3]])).deepEquals([0, 1, 2, 3])
-		o(flat([[], [0], [1, 2, 3], [4, 5, 6], [], [7, 8, 9]])).deepEquals([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-		o(
-			flat([
-				[[0]],
-				[
-					[1, 2, 3],
-					[4, 5, 6],
-				],
-				[],
-				[[]],
-			]),
-		).deepEquals([[0], [1, 2, 3], [4, 5, 6], []])
-	})
 	o("flatMap", function () {
 		o(flatMap([], (v) => [v])).deepEquals([])
 		o(flatMap([0, 1, 2, 3], (_) => [])).deepEquals([])
@@ -816,7 +799,23 @@ o.spec("array utils", function () {
 		})
 	})
 
-	o.spec("partitionAsync", async function () {
+	o.spec("partitionTypeGuard", function () {
+		o.test("partitionTypeGuard infers the types correctly for type guards", function () {
+			const array: ReadonlyArray<number | string> = ["1", 2, "3", 4]
+
+			function isString(item: number | string): item is string {
+				return typeof item === "string"
+			}
+
+			const [strings, numbers] = partition(array, isString)
+			strings satisfies Array<string>
+			numbers satisfies Array<number>
+			o(strings).deepEquals(["1", "3"])
+			o(numbers).deepEquals([2, 4])
+		})
+	})
+
+	o.spec("partitionAsync", function () {
 		const test = function (c: [string, any[], (any) => boolean, [any[], any[]]]) {
 			const [name, input, predicate, output] = c
 			o(name, async function () {
@@ -849,8 +848,11 @@ o.spec("array utils", function () {
 				],
 			],
 		]
-		// @ts-ignore
-		testcases.forEach(test)
+
+		for (const testCase of testcases) {
+			// @ts-ignore
+			test(testCase)
+		}
 
 		o("rejection in partitionAsync is propagated", async function () {
 			// can't use assertThrows because of circular dependency
@@ -873,5 +875,19 @@ o.spec("array utils", function () {
 		o(arrayOf(1, (idx) => idx + 1 + " one thousand")).deepEquals(["1 one thousand"])
 
 		o(arrayOf(2, (idx) => idx + 1 + " one thousand")).deepEquals(["1 one thousand", "2 one thousand"])
+	})
+
+	o("customId comparision", function () {
+		o(compare(new Uint8Array([]), new Uint8Array([]))).equals(0)
+
+		o(compare(new Uint8Array([1]), new Uint8Array([]))).equals(1)
+
+		o(compare(new Uint8Array([]), new Uint8Array([1]))).equals(-1)
+
+		o(compare(new Uint8Array([1, 1]), new Uint8Array([1, 1]))).equals(0)
+
+		o(compare(new Uint8Array([1, 1, 3]), new Uint8Array([1, 1, 2]))).equals(1)
+
+		o(compare(new Uint8Array([1, 1, 2]), new Uint8Array([1, 1, 3]))).equals(-1)
 	})
 })

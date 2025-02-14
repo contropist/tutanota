@@ -1,16 +1,20 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import n from "../../nodemocker.js"
-import { EndType, RepeatPeriod } from "../../../../src/api/common/TutanotaConstants.js"
-import { DesktopAlarmScheduler } from "../../../../src/desktop/sse/DesktopAlarmScheduler.js"
-import type { AlarmScheduler } from "../../../../src/calendar/date/AlarmScheduler.js"
-import { CryptoError } from "../../../../src/api/common/error/CryptoError.js"
+import { EndType, RepeatPeriod } from "../../../../src/common/api/common/TutanotaConstants.js"
+import { DesktopAlarmScheduler } from "../../../../src/common/desktop/sse/DesktopAlarmScheduler.js"
 import { downcast, lastThrow } from "@tutao/tutanota-utils"
-import { WindowManager } from "../../../../src/desktop/DesktopWindowManager.js"
-import { DesktopNotifier, NotificationResult } from "../../../../src/desktop/DesktopNotifier.js"
-import { DesktopAlarmStorage } from "../../../../src/desktop/sse/DesktopAlarmStorage.js"
-import { DesktopNativeCryptoFacade } from "../../../../src/desktop/DesktopNativeCryptoFacade.js"
-import { assertThrows } from "@tutao/tutanota-test-utils"
-import { EncryptedAlarmNotification } from "../../../../src/native/common/EncryptedAlarmNotification.js"
+import { WindowManager } from "../../../../src/common/desktop/DesktopWindowManager.js"
+import { DesktopNotifier, NotificationResult } from "../../../../src/common/desktop/DesktopNotifier.js"
+import { DesktopAlarmStorage } from "../../../../src/common/desktop/sse/DesktopAlarmStorage.js"
+import { DesktopNativeCryptoFacade } from "../../../../src/common/desktop/DesktopNativeCryptoFacade.js"
+import { assertThrows, spy } from "@tutao/tutanota-test-utils"
+import { EncryptedAlarmNotification } from "../../../../src/common/native/common/EncryptedAlarmNotification.js"
+import { CryptoError } from "@tutao/tutanota-crypto/error.js"
+import { makeAlarmScheduler } from "../../calendar/CalendarTestUtils.js"
+import { matchers, object, verify, when } from "testdouble"
+import { AlarmInfoTypeRef, AlarmNotificationTypeRef, CalendarEventRefTypeRef, RepeatRuleTypeRef } from "../../../../src/common/api/entities/sys/TypeRefs.js"
+import { AlarmScheduler } from "../../../../src/common/calendar/date/AlarmScheduler.js"
+import { formatNotificationForDisplay } from "../../../../src/calendar-app/calendar/model/CalendarModel.js"
 
 const oldTimezone = process.env.TZ
 
@@ -38,13 +42,6 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 		},
 	}
 
-	function makeAlarmScheduler(): AlarmScheduler {
-		return {
-			scheduleAlarm: o.spy(),
-			cancelAlarm: o.spy(),
-		}
-	}
-
 	const standardMocks = () => {
 		// node modules
 
@@ -58,8 +55,8 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 		const notifierMock = n.mock<DesktopNotifier>("__notifier", notifier).set()
 
 		const alarmStorage = {
-			storeAlarm: o.spy(() => Promise.resolve()),
-			deleteAlarm: o.spy(() => Promise.resolve()),
+			storeAlarm: spy(() => Promise.resolve()),
+			deleteAlarm: spy(() => Promise.resolve()),
 			getPushIdentifierSessionKey: () => Promise.resolve("piSk"),
 			getScheduledAlarms: () => [],
 			removePushIdentifierKey: () => {},
@@ -86,7 +83,7 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 
 			o(alarmStorageMock.storeAlarm.callCount).equals(0)
 			o(notifierMock.submitGroupedNotification.callCount).equals(0)
-			o(alarmScheduler.scheduleAlarm.callCount).equals(0)
+			verify(alarmScheduler.scheduleAlarm(matchers.anything(), matchers.anything(), matchers.anything(), matchers.anything()), { times: 0 })
 		})
 
 		o("some alarms", async function () {
@@ -109,19 +106,32 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 			await scheduler.rescheduleAll()
 
 			o(alarmStorageMock.storeAlarm.callCount).equals(0)
-			o(alarmScheduler.scheduleAlarm.calls.map((c) => c.args.slice(0, -1))).deepEquals([
-				[{ startTime: an.eventStart, endTime: an.eventEnd, summary: an.summary }, an.alarmInfo, an.repeatRule],
-			])
+
+			// Summary 1
+			verify(
+				alarmScheduler.scheduleAlarm(
+					{
+						startTime: an.eventStart,
+						endTime: an.eventEnd,
+						summary: an.summary,
+					},
+					an.alarmInfo,
+					an.repeatRule,
+					matchers.anything(),
+				),
+				{ times: 1 },
+			)
 		})
 	})
 
-	o.spec("handleAlarmNotification", async function () {
+	o.spec("handleAlarmNotification", function () {
 		o("handle multiple events", async function () {
 			const { wmMock, notifierMock, alarmStorageMock, cryptoMock } = standardMocks()
 
 			const alarmScheduler = makeAlarmScheduler()
 			const scheduler = new DesktopAlarmScheduler(wmMock, notifierMock, alarmStorageMock, cryptoMock, alarmScheduler)
 
+			// Summary 2
 			const an1 = createAlarmNotification({
 				startTime: new Date(2019, 9, 20, 10),
 				endTime: new Date(2019, 9, 20, 12),
@@ -132,6 +142,7 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 				interval: "1",
 			})
 
+			// Summary 3
 			const an2 = createAlarmNotification({
 				startTime: new Date(2019, 9, 20, 10),
 				endTime: new Date(2019, 9, 20, 12),
@@ -143,26 +154,49 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 			})
 
 			const an3 = createDeleteAlarmNotification(an1.alarmInfo.alarmIdentifier)
+
 			// @ts-ignore
 			await scheduler.handleAlarmNotification(an1)
 			// @ts-ignore
 			await scheduler.handleAlarmNotification(an2)
 
 			// We don't want the callback argument
-			o(alarmScheduler.scheduleAlarm.calls.map((c) => c.args.slice(0, -1))).deepEquals([
-				[{ startTime: an1.eventStart, endTime: an1.eventEnd, summary: an1.summary }, an1.alarmInfo, an1.repeatRule],
-				[{ startTime: an2.eventStart, endTime: an2.eventEnd, summary: an2.summary }, an2.alarmInfo, an2.repeatRule],
-			])
+			verify(
+				alarmScheduler.scheduleAlarm(
+					{
+						startTime: an1.eventStart,
+						endTime: an1.eventEnd,
+						summary: an1.summary,
+					},
+					an1.alarmInfo,
+					an1.repeatRule,
+					matchers.anything(),
+				),
+				{ times: 1 },
+			)
+			verify(
+				alarmScheduler.scheduleAlarm(
+					{
+						startTime: an2.eventStart,
+						endTime: an2.eventEnd,
+						summary: an2.summary,
+					},
+					an2.alarmInfo,
+					an2.repeatRule,
+					matchers.anything(),
+				),
+				{ times: 1 },
+			)
 
 			// @ts-ignore
 			await scheduler.handleAlarmNotification(an3)
-			o(alarmScheduler.cancelAlarm.calls.map((c) => c.args)).deepEquals([[an3.alarmInfo.alarmIdentifier]])
+			verify(alarmScheduler.cancelAlarm(an3.alarmInfo.alarmIdentifier), { times: 1 })
 		})
 
 		o("notification is shown and calendar is opened when it's clicked", async function () {
 			const { wmMock, notifierMock, alarmStorageMock, cryptoMock } = standardMocks()
 
-			const alarmScheduler = makeAlarmScheduler()
+			const alarmScheduler: AlarmScheduler = object()
 			const scheduler = new DesktopAlarmScheduler(wmMock, notifierMock, alarmStorageMock, cryptoMock, alarmScheduler)
 
 			const an1 = createAlarmNotification({
@@ -175,18 +209,18 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 				interval: "1",
 			})
 
+			const cbCaptor = matchers.captor()
+			when(alarmScheduler.scheduleAlarm(matchers.anything(), matchers.anything(), matchers.anything(), cbCaptor.capture())).thenResolve(undefined)
 			// @ts-ignore
 			await scheduler.handleAlarmNotification(an1)
 			o(notifierMock.submitGroupedNotification.callCount).equals(0)
+			const cb = cbCaptor.value
+			cb(an1.eventStart, "title")
 
-			const cb = lastThrow(alarmScheduler.scheduleAlarm.calls[0].args)
-			const title = "title"
-			const body = "body"
-			cb(title, body)
-
-			o(notifierMock.submitGroupedNotification.calls.map((c) => c.args.slice(0, -1))).deepEquals([[title, body, an1.alarmInfo.alarmIdentifier]])
+			const { title, body } = formatNotificationForDisplay(an1.eventStart, "title")
+			o(notifierMock.submitGroupedNotification.calls.map((c) => c.slice(0, -1))).deepEquals([[title, title, an1.alarmInfo.alarmIdentifier]])
 			o(wmMock.openCalendar.callCount).equals(0)
-			const onClick = lastThrow(notifierMock.submitGroupedNotification.calls[0].args)
+			const onClick = lastThrow(notifierMock.submitGroupedNotification.calls[0])
 			onClick(NotificationResult.Click)
 			o(wmMock.openCalendar.callCount).equals(1)
 		})
@@ -195,8 +229,8 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 			const { wmMock, notifierMock, cryptoMock } = standardMocks()
 			const alarmStorageMock = n
 				.mock<DesktopAlarmStorage>("__alarmStorage", {
-					storeAlarm: o.spy(() => Promise.resolve()),
-					deleteAlarm: o.spy(() => Promise.resolve()),
+					storeAlarm: spy(() => Promise.resolve()),
+					deleteAlarm: spy(() => Promise.resolve()),
 					getPushIdentifierSessionKey: () => null,
 					getScheduledAlarms: () => [],
 				})
@@ -220,8 +254,7 @@ o.spec("DesktopAlarmSchedulerTest", function () {
 				pushIdentifier: [`pushIdentifierFooPart1`, `pushIdentifierFooPart2`],
 			})
 
-			// @ts-ignore
-			await assertThrows(CryptoError, () => scheduler.handleAlarmNotification(an1))
+			await assertThrows(CryptoError, () => scheduler.handleAlarmNotification(an1 as unknown as EncryptedAlarmNotification))
 			o(alarmStorageMock.getPushIdentifierSessionKey.callCount).equals(2)
 		})
 
@@ -258,15 +291,18 @@ function createAlarmNotification({ startTime, endTime, trigger, endType, endValu
 	alarmIdCounter++
 	return {
 		_id: `scheduledAlarmId${alarmIdCounter}`,
+		_type: AlarmNotificationTypeRef,
 		eventStart: startTime,
 		eventEnd: endTime,
 		operation: "0",
 		summary: `summary${alarmIdCounter}`,
 		alarmInfo: {
+			_type: AlarmInfoTypeRef,
 			_id: `alarmInfoId1${alarmIdCounter}`,
 			alarmIdentifier: `alarmIdentifier${alarmIdCounter}`,
 			trigger,
 			calendarRef: {
+				_type: CalendarEventRefTypeRef,
 				_id: `calendarRefId${alarmIdCounter}`,
 				elementId: `calendarRefElementId${alarmIdCounter}`,
 				listId: `calendarRefListId${alarmIdCounter}`,
@@ -282,10 +318,14 @@ function createAlarmNotification({ startTime, endTime, trigger, endType, endValu
 		repeatRule: endType
 			? {
 					_id: `repeatRuleId${alarmIdCounter}`,
+					_type: RepeatRuleTypeRef,
+					timeZone: "Europe/Berlin",
+					excludedDates: [],
 					endType,
 					endValue,
 					frequency,
 					interval,
+					advancedRules: [],
 			  }
 			: null,
 		user: "userId1",

@@ -1,12 +1,10 @@
 /**
  * This file contains some utilities used from various build scripts in this directory.
  */
-import fs from "fs-extra"
-import path, { dirname } from "path"
-import { fileURLToPath } from "url"
-import stream from "stream"
-import { spawn, spawnSync } from "child_process"
-import { $ } from "zx"
+import fs from "node:fs/promises"
+import path, { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import stream from "node:stream"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -15,71 +13,11 @@ var measureStartTime
 
 /**
  * Returns tutanota app version (as in package.json).
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function getTutanotaAppVersion() {
-	const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"))
+export async function getTutanotaAppVersion() {
+	const packageJson = JSON.parse(await fs.readFile(path.join(__dirname, "..", "package.json"), "utf8"))
 	return packageJson.version.trim()
-}
-
-/**
- * Returns the version of electron used by the app (as in package.json).
- * @returns Promise<{string}>
- */
-export async function getElectronVersion(log = console.log.bind(console)) {
-	return await getInstalledModuleVersion("electron", log)
-}
-
-/**
- * Get the installed version of a module
- * @param module {string}
- * @returns Promise<{string}>
- */
-export async function getInstalledModuleVersion(module, log) {
-	let json
-	const cachePath = "node_modules/.npm-deps-resolved"
-	if (await fs.exists(cachePath)) {
-		// Look for node_modules in current directory
-		const content = await fs.readFile(cachePath, "utf8")
-		json = JSON.parse(content)
-	} else if (await fs.exists(path.join("..", cachePath))) {
-		// Try to find node_modules in directory one level up (e.g. if we run tests). Should be probably more generic
-		const content = await fs.readFile(path.join("..", cachePath), "utf8")
-		json = JSON.parse(content)
-	} else {
-		console.log(`Using slow method to resolve dependency version. Add a postinstall script to dump 'npm list' into ${cachePath} to speed things up.`)
-		// npm list likes to error out for no reason so we just print a warning. If it really fails, we will see it.
-		// shell: true because otherwise Windows can't find npm.
-		const { stdout, stderr, status, error } = spawnSync("npm", ["list", module, "--json"], { shell: true })
-		if (status !== 0) {
-			log(`npm list is not happy about ${module}, but it doesn't mean anything`, status, stderr, error)
-		}
-		json = JSON.parse(stdout.toString().trim())
-	}
-
-	const version = findVersion(json, module)
-	if (version == null) {
-		throw new Error(`Could not find version of ${module}`)
-	}
-	return version
-}
-
-// Unfortunately `npm list` is garbage and instead of just giving you the info about package it will give you some subtree with the thing you are looking for
-// buried deep beneath. So we try to find it manually by descending into each dependency.
-// This surfaces in admin client when keytar is not our direct dependency but rather through the tutanota-3
-function findVersion({ dependencies }, nodeModule) {
-	if (dependencies[nodeModule]) {
-		return dependencies[nodeModule].version
-	} else {
-		for (const [name, dep] of Object.entries(dependencies)) {
-			if ("dependencies" in dep) {
-				const found = findVersion(dep, nodeModule)
-				if (found) {
-					return found
-				}
-			}
-		}
-	}
 }
 
 /**
@@ -98,7 +36,7 @@ export function measure() {
  * @returns {string}
  */
 export function getDefaultDistDirectory() {
-	return path.resolve("build/dist")
+	return path.resolve("build")
 }
 
 /** Throws if result has a value other than 0. **/
@@ -141,7 +79,7 @@ export async function fileExists(filePath) {
 /**
  * There are various possibilities for how a given platform could be identified
  * We need to make sure to be consistent at certain points, such as when caching files or processing CLI args
- * @param platformName {"mac"|"darwin"|"win"|"win32"|"linux"}
+ * @param platformName {string}
  * @returns {"darwin"|"win32"|"linux"}
  */
 export function getCanonicalPlatformName(platformName) {
@@ -159,6 +97,37 @@ export function getCanonicalPlatformName(platformName) {
 	}
 }
 
+/**
+ * Checks whether the combination of OS & architecture is supported by the build system
+ * @param platformName {NodeJS.Platform}
+ * @param architecture {NodeJS.Architecture|"universal"}
+ * @returns {architecture is "x64"|"arm64"|"universal"}
+ */
+export function checkArchitectureIsSupported(platformName, architecture) {
+	switch (architecture) {
+		case "x64":
+			return true
+		case "arm64":
+		case "universal":
+			return platformName === "darwin"
+		default:
+			return false
+	}
+}
+
+/**
+ *
+ * @param platformName {NodeJS.Platform}
+ * @param architecture {NodeJS.Architecture|"universal"}
+ * @return {"x64"|"arm64"|"universal"}
+ */
+export function getValidArchitecture(platformName, architecture) {
+	if (!checkArchitectureIsSupported(platformName, architecture)) {
+		throw new Error(`Unsupported architecture: ${platformName} ${architecture}`)
+	}
+	return architecture
+}
+
 export async function runStep(name, cmd) {
 	const before = Date.now()
 	console.log("Build >", name)
@@ -170,39 +139,46 @@ export function writeFile(targetFile, content) {
 	return fs.mkdir(path.dirname(targetFile), { recursive: true }).then(() => fs.writeFile(targetFile, content, "utf-8"))
 }
 
-/**
- * A little helper that runs the command. Unlike zx stdio is set to "inherit" and we don't pipe output.
- */
-export async function sh(pieces, ...args) {
-	// If you need this function, but you can't use zx copy it from here
-	// https://github.com/google/zx/blob/a7417430013445592bcd1b512e1f3080a87fdade/src/guards.mjs
-	// (or more up-to-date version)
-	const fullCommand = formatCommand(pieces, args)
-	console.log(`$ ${fullCommand}`)
-	const child = spawn(fullCommand, { shell: true, stdio: "inherit" })
-	return new Promise((resolve, reject) => {
-		child.on("close", (code) => {
-			if (code === 0) {
-				resolve()
-			} else {
-				reject(new Error("Process failed with " + code))
-			}
-		})
-		child.on("error", (error) => {
-			reject(`Failed to spawn child: ${error}`)
-		})
-	})
+export function normalizeCopyTarget(target) {
+	return removeNpmNamespacePrefix(changeHypenToUnderscore(target))
 }
 
-function formatCommand(pieces, args) {
-	// Pieces are parts between arguments
-	// So if you have incvcation sh`command ${myArg} something ${myArg2}`
-	// then pieces will be ["command ", " something "]
-	// and the args will be [(valueOfMyArg1), (valueOfMyArg2)]
-	// There are always args.length + 1 pieces (if command ends with argument then the last piece is an empty string).
-	let fullCommand = pieces[0]
-	for (let i = 0; i < args.length; i++) {
-		fullCommand += $.quote(args[i]) + pieces[i + 1]
+export function changeHypenToUnderscore(target) {
+	// because its name is used as a C identifier, the binary produced by better-sqlite3 is called better_sqlite3.node
+	return target.replace("better-sqlite3", "better_sqlite3")
+}
+
+export function removeNpmNamespacePrefix(target) {
+	// linear complexity Array.last(), wth not?
+	// gets us the moduleName out of @tutao/moduleName
+	return target.split("/").reduce((p, c) => c, null)
+}
+
+/**
+ * @param arch {NodeJS.Architecture|"universal"}
+ * @returns {Array<import("./nativeLibraryProvider.js").BuildArch>}
+ */
+export function resolveArch(arch) {
+	if (arch === "universal") {
+		return ["x64", "arm64"]
+	} else if (arch === "x64" || arch === "arm64") {
+		return [arch]
+	} else {
+		throw new Error(`Unsupported arch: ${arch}`)
 	}
-	return fullCommand
+}
+
+/**
+ * napi appends abi to the architecture (see https://napi.rs/docs/cli/napi-config)
+ * @param platform {NodeJS.Platform}
+ * @param architecture {NodeJS.Architecture}
+ */
+export function getTargetTriple(platform, architecture) {
+	if (platform === "linux") {
+		return `${platform}-${architecture}-gnu`
+	} else if (platform === "win32") {
+		return `${platform}-${architecture}-msvc`
+	} else {
+		return `${platform}-${architecture}`
+	}
 }

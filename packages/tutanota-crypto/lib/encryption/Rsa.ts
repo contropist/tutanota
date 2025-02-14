@@ -1,46 +1,16 @@
 // @ts-ignore[untyped-import]
 import { BigInteger, parseBigInt, RSAKey } from "../internal/crypto-jsbn-2012-08-09_1.js"
 import type { Base64, Hex } from "@tutao/tutanota-utils"
-import { base64ToHex, base64ToUint8Array, concat, int8ArrayToBase64, uint8ArrayToBase64, uint8ArrayToHex } from "@tutao/tutanota-utils"
-import { random } from "../random/Randomizer.js"
-import type { PrivateKey, PublicKey, RsaKeyPair } from "./RsaKeyPair.js"
+import { base64ToHex, base64ToUint8Array, concat, int8ArrayToBase64, uint8ArrayToHex } from "@tutao/tutanota-utils"
+import type { RsaPrivateKey, RsaPublicKey } from "./RsaKeyPair.js"
 import { CryptoError } from "../misc/CryptoError.js"
 import { sha256Hash } from "../hashes/Sha256.js"
+import { KeyPairType } from "./AsymmetricKeyPair.js"
 
 const RSA_KEY_LENGTH_BITS = 2048
 const RSA_PUBLIC_EXPONENT = 65537
 
-export function generateRsaKey(): RsaKeyPair {
-	// jsbn is seeded inside, see SecureRandom.js
-	try {
-		let rsa = new RSAKey()
-		rsa.generate(RSA_KEY_LENGTH_BITS, RSA_PUBLIC_EXPONENT.toString(16)) // must be hex for JSBN
-
-		return {
-			publicKey: {
-				version: 0,
-				keyLength: RSA_KEY_LENGTH_BITS,
-				modulus: uint8ArrayToBase64(new Uint8Array(rsa.n.toByteArray())),
-				publicExponent: RSA_PUBLIC_EXPONENT,
-			},
-			privateKey: {
-				version: 0,
-				keyLength: RSA_KEY_LENGTH_BITS,
-				modulus: uint8ArrayToBase64(new Uint8Array(rsa.n.toByteArray())),
-				privateExponent: uint8ArrayToBase64(new Uint8Array(rsa.d.toByteArray())),
-				primeP: uint8ArrayToBase64(new Uint8Array(rsa.p.toByteArray())),
-				primeQ: uint8ArrayToBase64(new Uint8Array(rsa.q.toByteArray())),
-				primeExponentP: uint8ArrayToBase64(new Uint8Array(rsa.dmp1.toByteArray())),
-				primeExponentQ: uint8ArrayToBase64(new Uint8Array(rsa.dmq1.toByteArray())),
-				crtCoefficient: uint8ArrayToBase64(new Uint8Array(rsa.coeff.toByteArray())),
-			},
-		}
-	} catch (e) {
-		throw new CryptoError("failed RSA key generation", e as Error)
-	}
-}
-
-export function rsaEncrypt(publicKey: PublicKey, bytes: Uint8Array, seed: Uint8Array): Uint8Array {
+export function rsaEncrypt(publicKey: RsaPublicKey, bytes: Uint8Array, seed: Uint8Array): Uint8Array {
 	const rsa = new RSAKey()
 	// we have double conversion from bytes to hex to big int because there is no direct conversion from bytes to big int
 	// BigInteger of JSBN uses a signed byte array and we convert to it by using Int8Array
@@ -62,7 +32,7 @@ export function rsaEncrypt(publicKey: PublicKey, bytes: Uint8Array, seed: Uint8A
 	return _padAndUnpadLeadingZeros(publicKey.keyLength / 8, encrypted)
 }
 
-export function rsaDecrypt(privateKey: PrivateKey, bytes: Uint8Array): Uint8Array {
+export function rsaDecrypt(privateKey: RsaPrivateKey, bytes: Uint8Array): Uint8Array {
 	try {
 		const rsa = new RSAKey()
 		// we have double conversion from bytes to hex to big int because there is no direct conversion from bytes to big int
@@ -183,7 +153,8 @@ export function oaepUnpad(value: Uint8Array, keyLength: number): Uint8Array {
 	}
 
 	// check that the zeros and the one is there
-	for (var index = 2 * hashLength; index < value.length; index++) {
+	let index
+	for (index = 2 * hashLength; index < value.length; index++) {
 		if (value[index] === 1) {
 			// found the 0x01
 			break
@@ -337,7 +308,7 @@ export function i2osp(i: number): Uint8Array {
  * @returns The public key in a persistable array format
  * @private
  */
-function _publicKeyToArray(publicKey: PublicKey): BigInteger[] {
+function _publicKeyToArray(publicKey: RsaPublicKey): BigInteger[] {
 	return [_base64ToBigInt(publicKey.modulus)]
 }
 
@@ -346,7 +317,7 @@ function _publicKeyToArray(publicKey: PublicKey): BigInteger[] {
  * @returns The private key in a persistable array format
  * @private
  */
-function _privateKeyToArray(privateKey: PrivateKey): BigInteger[] {
+function _privateKeyToArray(privateKey: RsaPrivateKey): BigInteger[] {
 	return [
 		_base64ToBigInt(privateKey.modulus),
 		_base64ToBigInt(privateKey.privateExponent),
@@ -358,8 +329,9 @@ function _privateKeyToArray(privateKey: PrivateKey): BigInteger[] {
 	]
 }
 
-function _arrayToPublicKey(publicKey: BigInteger[]): PublicKey {
+function _arrayToPublicKey(publicKey: BigInteger[]): RsaPublicKey {
 	return {
+		keyPairType: KeyPairType.RSA,
 		version: 0,
 		keyLength: RSA_KEY_LENGTH_BITS,
 		modulus: int8ArrayToBase64(new Int8Array(publicKey[0].toByteArray())),
@@ -367,7 +339,7 @@ function _arrayToPublicKey(publicKey: BigInteger[]): PublicKey {
 	}
 }
 
-function _arrayToPrivateKey(privateKey: BigInteger[]): PrivateKey {
+function _arrayToPrivateKey(privateKey: BigInteger[]): RsaPrivateKey {
 	return {
 		version: 0,
 		keyLength: RSA_KEY_LENGTH_BITS,
@@ -391,7 +363,7 @@ function _base64ToBigInt(base64: Base64): BigInteger {
  * @return {string} A hex string containing the length of string.
  */
 function _hexLen(string: string): Hex {
-	var hexLen = string.length.toString(16)
+	let hexLen = string.length.toString(16)
 
 	while (hexLen.length < 4) {
 		hexLen = "0" + hexLen
@@ -401,10 +373,10 @@ function _hexLen(string: string): Hex {
 }
 
 export function _keyArrayToHex(key: BigInteger[]): Hex {
-	var hex = ""
+	let hex = ""
 
-	for (var i = 0; i < key.length; i++) {
-		var param = key[i].toString(16)
+	for (let i = 0; i < key.length; i++) {
+		let param = key[i].toString(16)
 
 		if (param.length % 2 === 1) {
 			param = "0" + param
@@ -418,11 +390,11 @@ export function _keyArrayToHex(key: BigInteger[]): Hex {
 
 function _hexToKeyArray(hex: Hex): BigInteger[] {
 	try {
-		var key: BigInteger[] = []
-		var pos = 0
+		let key: BigInteger[] = []
+		let pos = 0
 
 		while (pos < hex.length) {
-			var nextParamLen = parseInt(hex.substring(pos, pos + 4), 16)
+			let nextParamLen = parseInt(hex.substring(pos, pos + 4), 16)
 			pos += 4
 			key.push(parseBigInt(hex.substring(pos, pos + nextParamLen), 16))
 			pos += nextParamLen
@@ -446,18 +418,18 @@ function _validateKeyLength(key: BigInteger[]) {
 	}
 }
 
-export function privateKeyToHex(privateKey: PrivateKey): Hex {
+export function rsaPrivateKeyToHex(privateKey: RsaPrivateKey): Hex {
 	return _keyArrayToHex(_privateKeyToArray(privateKey))
 }
 
-export function publicKeyToHex(publicKey: PublicKey): Hex {
+export function rsaPublicKeyToHex(publicKey: RsaPublicKey): Hex {
 	return _keyArrayToHex(_publicKeyToArray(publicKey))
 }
 
-export function hexToPrivateKey(privateKeyHex: Hex): PrivateKey {
+export function hexToRsaPrivateKey(privateKeyHex: Hex): RsaPrivateKey {
 	return _arrayToPrivateKey(_hexToKeyArray(privateKeyHex))
 }
 
-export function hexToPublicKey(publicKeyHex: Hex): PublicKey {
+export function hexToRsaPublicKey(publicKeyHex: Hex): RsaPublicKey {
 	return _arrayToPublicKey(_hexToKeyArray(publicKeyHex))
 }

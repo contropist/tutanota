@@ -1,129 +1,139 @@
+import path from "node:path"
+import fs from "node:fs"
+import { fileExists, LogWriter, removeNpmNamespacePrefix } from "./buildUtils.js"
+import { createRequire } from "node:module"
+import { getElectronVersion, getInstalledModuleVersion } from "./getInstalledModuleVersion.js"
+import { spawn } from "node:child_process"
+
 /**
- * This script provides a utility for building and getting cached native modules
+ * @typedef {(...args: string[]) => void} Logger
  */
-import path from "path"
-import fs from "fs"
-import { program } from "commander"
-import { fileURLToPath } from "url"
-import { fileExists, getCanonicalPlatformName, getElectronVersion, getInstalledModuleVersion, LogWriter } from "./buildUtils.js"
-import { createRequire } from "module"
 
-import { spawn } from "child_process"
+/**
+ * @typedef {"nodeGyp"|"copyFromDist"} BuildStrategy
+ */
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	await program
-		.usage("<module> [...options]")
-		.description(
-			"Utility for ensuring that a built and cached version of a given node module exists. Will build using node-gyp or download the module with prebuild-install as necessary",
-		)
-		.arguments("<module>")
-		.option("-e, --environment <environment>", "which node environment to target", "electron")
-		.option("-r, --root-dir <rootDir>", "path to the root of the project", ".")
-		.option("-f, --force-rebuild", "force a rebuild (don't use the cache)")
-		.option("-e, --use-existing", "Use the existing built version (e.g. when using prebuild)")
-		.option(
-			"-c, --copy-target <copyTarget>",
-			"Which node-gyp target (specified in binding.gyp) to copy the output of. Defaults to the same name as the module",
-		)
-		.action(async (module, opts) => {
-			validateOpts(opts)
-			await cli(module, opts)
-		})
-		.parseAsync(process.argv)
-}
+/**
+ * @typedef {"arm64"|"x64"|"universal"} InputArch
+ */
 
-function validateOpts(opts) {
-	if (!["electron", "node"].includes(opts.environment)) {
-		throw new Error(`Invalid value for environment: ${opts.environment}`)
-	}
-}
+/**
+ * @typedef {"arm64"|"x64"} BuildArch
+ */
 
-async function cli(nodeModule, { environment, rootDir, forceRebuild, useExisting, copyTarget }) {
-	const platform = getCanonicalPlatformName(process.platform)
-	const path = await getCachedLibPath({ rootDir, nodeModule, environment, platform }, console.log.bind(console))
+/**
+ * @typedef {"node"|"electron"} Environment
+ */
 
-	if (forceRebuild) {
-		await fs.promises.rm(path, { force: true })
-	}
-
-	await getNativeLibModulePath({
-		environment,
-		rootDir,
-		nodeModule,
-		log: console.log.bind(console),
-		useExisting,
-		platform,
-		copyTarget,
-	})
-}
+/**
+ * @typedef {"win32"|"linux"|"darwin"} Platform
+ */
 
 /**
  * Rebuild native lib for either current node version or for electron version and
  * cache in the "native-cache" directory.
  * ABI for nodejs and for electron differs and we need to build it differently for each. We do caching
  * to avoid rebuilding between different invocations (e.g. running desktop and running tests).
- * @param environment {"electron"|"node"}
- * @param platform {"win32"|"linux"|"darwin"} platform to compile for in case of cross compilation
- * @param rootDir {string} path to the root of the project
- * @param nodeModule {string} name of the npm module to rebuild
- * @param log {(...string) => void}
- * @param noBuild {boolean} Don't build, just copy the existing built version from node_modules. Will throw if there is none there
- * @param copyTarget {string | undefined} Which node-gyp target (specified in binding.gyp) to copy the output of. Defaults to the same name as the module
- * @param prebuildTarget: {{ runtime: string, version: number} | undefined} Target parameters to use when getting a prebuild
- * @returns {Promise<string>} path to cached native module
+ * @param params {object}
+ * @param params.environment {Environment}
+ * @param params.platform {Platform} platform to compile for in case of cross compilation
+ * @param params.architecture {InputArch} the instruction set used in the built desktop binary
+ * @param params.rootDir {string} path to the root of the project
+ * @param params.nodeModule {string} name of the npm module to rebuild
+ * @param params.log {Logger}
+ * @param params.copyTarget {string | undefined} Which node-gyp target (specified in binding.gyp) to copy the output of. Defaults to the same name as the module
+ * @returns {Promise<Record<string, string>>} paths to cached native module by architecture
  */
-export async function getNativeLibModulePath({ environment, platform, rootDir, nodeModule, log, noBuild, copyTarget }) {
-	const libPath = await getCachedLibPath({ rootDir, nodeModule, environment, platform }, log)
+export async function getNativeLibModulePaths({ environment, platform, architecture, rootDir, nodeModule, log, copyTarget }) {
+	const namespaceTrimmedNodeModule = removeNpmNamespacePrefix(nodeModule)
+	const libPaths = await getCachedLibPaths({ rootDir, nodeModule: namespaceTrimmedNodeModule, environment, platform, architecture }, log)
 
-	if (await fileExists(libPath)) {
-		log(`Using cached ${nodeModule} at`, libPath)
-	} else {
-		let isCrossCompilation = false
-		if (platform === "win32" && process.platform !== "win32") {
-			isCrossCompilation = true
-		} else if (platform !== process.platform) {
-			// We only care about cross compiling the app when building for windows from linux
-			// since it's only possible to build for mac from mac,
-			// and there's no reason to build for linux from anything but linux
-			// Consider it an here error since if you're doing it it's probably a mistake
-			// And it's more effort than it's worth to allow arbitrary configurations
-			throw new Error(`Invalid cross compilation ${process.platform} => ${platform}. only * => win32 is allowed`)
-		}
-
-		if (isCrossCompilation) {
-			log(`Getting prebuilt ${nodeModule} using prebuild-install...`)
-			await getPrebuiltNativeModuleForWindows({
-				nodeModule,
-				rootDir,
-				log,
-			})
+	const isCrossCompilation = checkIsCrossCompilation(platform)
+	for (/** @type {[BuildArch, string]} */ const entry of Object.entries(libPaths)) {
+		/** @type BuildArch */
+		// @ts-ignore
+		const architecture = entry[0]
+		const libPath = entry[1]
+		if (await fileExists(libPath)) {
+			log(`Using cached ${nodeModule} at`, libPath)
 		} else {
-			log(`Compiling ${nodeModule} for ${platform}...`)
-			await buildNativeModule({
-				environment,
-				rootDir,
-				log,
-				nodeModule,
-			})
-		}
+			const moduleDir = await getModuleDir(rootDir, nodeModule)
+			if (isCrossCompilation) {
+				log(`Getting prebuilt ${nodeModule} using prebuild-install...`)
+				await getPrebuiltNativeModuleForWindows({
+					nodeModule,
+					rootDir,
+					platform,
+					log,
+				})
 
-		const moduleDir = await getModuleDir(rootDir, nodeModule)
-		await fs.promises.copyFile(path.join(moduleDir, "build/Release", `${copyTarget ?? nodeModule}.node`), libPath)
+				await fs.promises.copyFile(path.join(moduleDir, "build/Release", `${copyTarget ?? nodeModule}.${platform}-${architecture}.node`), libPath)
+			} else {
+				log(`Compiling ${nodeModule} for ${platform}...`)
+				const artifactPath = await buildNativeModule({
+					environment,
+					platform,
+					rootDir,
+					log,
+					nodeModule,
+					copyTarget,
+					architecture,
+				})
+				await fs.promises.copyFile(artifactPath, libPath)
+			}
+		}
 	}
 
-	return libPath
+	return libPaths
+}
+
+function checkIsCrossCompilation(platform) {
+	if (platform === "win32" && process.platform !== "win32") {
+		return true
+	} else if (platform !== process.platform) {
+		// We only care about cross compiling the app when building for windows from linux
+		// since it's only possible to build for mac from mac,
+		// and there's no reason to build for linux from anything but linux
+		// Consider it an here error since if you're doing it it's probably a mistake
+		// And it's more effort than it's worth to allow arbitrary configurations
+		throw new Error(`Invalid cross compilation ${process.platform} => ${platform}. only * => win32 is allowed`)
+	}
+
+	return false
 }
 
 /**
  * Build a native module using node-gyp
  * Runs `node-gyp rebuild ...` from within `node_modules/<nodeModule>/`
- * @param nodeModule {string} the node module being built. Must be installed, and must be a native module project with a `binding.gyp` at the root
- * @param environment {"node"|"electron"} Used to determine which node version to use
- * @param rootDir {string} the root dir of the project
- * @param log {(string) => void} a logger
- * @returns {Promise<void>}
+ * @param params {object}
+ * @param params.nodeModule {string} the node module being built. Must be installed, and must be a native module project with a `binding.gyp` at the root
+ * @param params.copyTarget {string}
+ * @param params.platform {Platform} the platform to build the binary for
+ * @param params.environment {Environment} Used to determine which node version to use
+ * @param params.rootDir {string} the root dir of the project
+ * @param params.architecture {BuildArch} the architecture to build for: "x64" | "arm64"
+ * @param params.log {Logger}
+ * @returns {Promise<string>} the path to the binary that was ordered
  */
-export async function buildNativeModule({ nodeModule, environment, rootDir, log }) {
+export async function buildNativeModule({ nodeModule, copyTarget, environment, platform, rootDir, architecture, log }) {
+	const moduleDir = await getModuleDir(rootDir, nodeModule)
+
+	const allowedArch = ["x64", "arm64"].includes(architecture)
+	if (!allowedArch) {
+		throw new Error("this should not have been called with universal architecture since we're not using lipo anymore.")
+	}
+	return await buildWithGyp(architecture, environment, platform, moduleDir, copyTarget, log)
+}
+
+/**
+ * @typedef {(arch: BuildArch, environment: Environment, platform: Platform, moduleDir: string, copyTarget: string, log: Logger) => Promise<string>} Builder
+ */
+
+/**
+ * rebuild a native module to avoid using the prebuilt version
+ * @type Builder
+ */
+async function buildWithGyp(arch, environment, platform, moduleDir, copyTarget, log) {
 	await callProgram({
 		command: "npm exec",
 		args: [
@@ -132,14 +142,19 @@ export async function buildNativeModule({ nodeModule, environment, rootDir, log 
 			"rebuild",
 			"--release",
 			"--build-from-source",
-			`--arch=${process.arch}`,
+			`--arch=${arch}`,
 			...(environment === "electron"
 				? ["--runtime=electron", "--dist-url=https://www.electronjs.org/headers", `--target=${await getElectronVersion(log)}`]
 				: []),
 		],
-		cwd: await getModuleDir(rootDir, nodeModule),
+		cwd: moduleDir,
 		log,
 	})
+	const gypResult = path.join(moduleDir, "build", "Release", `${copyTarget}.node`)
+	// we're building two archs one after another and gyp nukes the output folder before starting a build
+	const resultWithArch = path.join(moduleDir, `${copyTarget}-${arch}.node`)
+	await fs.promises.copyFile(gypResult, resultWithArch)
+	return resultWithArch
 }
 
 /**
@@ -147,24 +162,20 @@ export async function buildNativeModule({ nodeModule, environment, rootDir, log 
  *
  * we can't cross-compile with node-gyp, so we need to use the prebuilt version when building a desktop client for windows on linux
  *
- * For getting keytar we would want {target: { runtime: "napi", version: 3 }}
- * the current release artifacts on github are named accordingly,
- * e.g. keytar-v7.7.0-napi-v3-linux-x64.tar.gz for N-API v3
- *
- * @param nodeModule {string}
- * @param rootDir
- * @param platform: {"win32" | "darwin" | "linux"}
- * @param target {{ runtime: "napi"|"electron", version: number }}
- * @param log
+ * @param params {object}
+ * @param params.nodeModule {string}
+ * @param params.rootDir {string}
+ * @param params.platform: {"win32" | "darwin" | "linux"}
+ * @param params.log {Logger}
  * @returns {Promise<void>}
  */
-export async function getPrebuiltNativeModuleForWindows({ nodeModule, rootDir, log }) {
+export async function getPrebuiltNativeModuleForWindows({ nodeModule, rootDir, platform, log }) {
 	// We never want to use prebuilt native modules when building on jenkins, so it is considered an error as a safeguard
 	if (process.env.JENKINS_HOME) {
 		throw new Error("Should not be getting prebuilt native modules in CI")
 	}
 
-	const target = await getPrebuildConfiguration(nodeModule, log)
+	const target = await getPrebuildConfiguration(nodeModule, platform, log)
 
 	await callProgram({
 		command: "npm exec",
@@ -184,27 +195,21 @@ export async function getPrebuiltNativeModuleForWindows({ nodeModule, rootDir, l
 /**
  * prebuild-install {runtime, target} configurations are a pain to maintain because they are specific for whichever native module you want to get a prebuild for,
  * So we just define them here and throw an error if we try to obtain a configuration for an unknown module
- * @return {{ runtime: string, version: number} | null}
+ * @param nodeModule {string}
+ * @param platform {"electron"|"node"}
+ * @param log {Logger}
+ * @return {Promise<{ runtime: string, version: string} | null>}
  */
-async function getPrebuildConfiguration(nodeModule, environment, log) {
-	switch (nodeModule) {
-		// Keytar uses NAPI v3, so we just specify that as our desired prebuild
-		case "keytar":
-			return {
-				runtime: "napi",
-				version: "3",
-			}
-		// better-sqlite3 doesn't use NAPI, so if we are building for electron, we have to specify which electron version
-		// otherwise it will just use whichever version of node we are currently running
-		case "better-sqlite3":
-			return environment === "electron"
-				? {
-						runtime: "electron",
-						version: await getElectronVersion(log),
-				  }
-				: null
-		default:
-			throw new Error(`Unknown prebuild-configuration for node module ${nodeModule}, requires a definition`)
+async function getPrebuildConfiguration(nodeModule, platform, log) {
+	if (nodeModule === "better-sqlite3") {
+		return platform === "electron"
+			? {
+					runtime: "electron",
+					version: await getElectronVersion(log),
+			  }
+			: null
+	} else {
+		throw new Error(`Unknown prebuild-configuration for node module ${nodeModule}, requires a definition`)
 	}
 }
 
@@ -237,21 +242,52 @@ function callProgram({ command, args, cwd, log }) {
 
 /**
  * Get the target name for the built native library when cached
- * @param rootDir
- * @param nodeModule
- * @param environment
- * @param platform
- * @returns {Promise<string>}
+ * @param params {object}
+ * @param params.rootDir {string}
+ * @param params.nodeModule {string}
+ * @param params.environment {Environment}
+ * @param params.platform {Platform}
+ * @param params.architecture {InputArch} the instruction set used in the built desktop binary
+ * @param log {Logger}
+ * @returns {Promise<Partial<Record<BuildArch, string>>>} map of the location of the built binaries for each architecture that needs to be built
  */
-async function getCachedLibPath({ rootDir, nodeModule, environment, platform }, log) {
-	const dir = path.join(rootDir, "native-cache", environment)
+export async function getCachedLibPaths({ rootDir, nodeModule, environment, platform, architecture }, log) {
 	const libraryVersion = await getInstalledModuleVersion(nodeModule, log)
-	await fs.promises.mkdir(dir, { recursive: true })
 
+	let versionedEnvironment
 	if (environment === "electron") {
-		return path.resolve(dir, `${nodeModule}-${libraryVersion}-electron-${await getInstalledModuleVersion("electron", log)}-${platform}.node`)
+		versionedEnvironment = `electron-${await getInstalledModuleVersion("electron", log)}`
 	} else {
-		return path.resolve(dir, `${nodeModule}-${libraryVersion}-${platform}.node`)
+		// process.versions.modules is an ABI version. It is not significant for modules that use new ABI but still matters for those we use
+		versionedEnvironment = `node-${process.versions.modules}`
+	}
+	return await buildCachedLibPaths({ rootDir, nodeModule, environment, versionedEnvironment, platform, libraryVersion, architecture })
+}
+
+/**
+ *
+ * @param params {object}
+ * @param params.rootDir {string}
+ * @param params.nodeModule {string}
+ * @param params.environment {Environment}
+ * @param params.versionedEnvironment {string}
+ * @param params.platform {Platform}
+ * @param params.libraryVersion {string}
+ * @param params.architecture {InputArch} the instruction set used in the built desktop binary
+ * @return {Promise<Partial<Record<BuildArch, string>>>}
+ */
+export async function buildCachedLibPaths({ rootDir, nodeModule, environment, versionedEnvironment, platform, libraryVersion, architecture }) {
+	const dir = path.join(rootDir, "native-cache", environment)
+	await fs.promises.mkdir(dir, { recursive: true })
+	if (architecture === "universal") {
+		return {
+			x64: path.resolve(dir, `${nodeModule}-${libraryVersion}-${versionedEnvironment}-${platform}-x64.node`),
+			arm64: path.resolve(dir, `${nodeModule}-${libraryVersion}-${versionedEnvironment}-${platform}-arm64.node`),
+		}
+	} else {
+		return {
+			[architecture]: path.resolve(dir, `${nodeModule}-${libraryVersion}-${versionedEnvironment}-${platform}-${architecture}.node`),
+		}
 	}
 }
 

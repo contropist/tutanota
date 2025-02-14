@@ -5,10 +5,10 @@ export function concat(...arrays: Uint8Array[]): Uint8Array {
 	let length = arrays.reduce((previous, current) => previous + current.length, 0)
 	let result = new Uint8Array(length)
 	let index = 0
-	arrays.forEach((array) => {
+	for (const array of arrays) {
 		result.set(array, index)
 		index += array.length
-	})
+	}
 	return result
 }
 
@@ -133,8 +133,9 @@ export function findAndRemove<T>(theArray: Array<T>, finder: (arg0: T) => boolea
 	}
 }
 
+/** find all matches inside an array and remove them. returns true if any instances were removed. */
 export function findAllAndRemove<T>(theArray: Array<T>, finder: (arg0: T) => boolean, startIndex: number = 0): boolean {
-	var removedElement = false
+	let removedElement = false
 
 	for (let i = theArray.length - 1; i >= startIndex; i--) {
 		if (finder(theArray[i])) {
@@ -191,6 +192,10 @@ export function isEmpty<T>(array: ReadonlyArray<T>): boolean {
 	return array.length === 0
 }
 
+export function isNotEmpty(array: ReadonlyArray<unknown>): boolean {
+	return array.length != 0
+}
+
 export function lastThrow<T>(array: ReadonlyArray<T>): T {
 	if (isEmpty(array)) {
 		throw new RangeError("Array is empty")
@@ -214,7 +219,7 @@ export function first<T>(array: ReadonlyArray<T>): T | null {
 	return array[0] || null
 }
 
-export function findLast<T>(array: Array<T>, predicate: (arg0: T) => boolean): T | null | undefined {
+export function findLast<T>(array: ReadonlyArray<T>, predicate: (arg0: T) => boolean): T | null | undefined {
 	const index = findLastIndex(array, predicate)
 
 	if (index !== -1) {
@@ -224,7 +229,7 @@ export function findLast<T>(array: Array<T>, predicate: (arg0: T) => boolean): T
 	return null
 }
 
-export function findLastIndex<T>(array: Array<T>, predicate: (arg0: T) => boolean): number {
+export function findLastIndex<T>(array: ReadonlyArray<T>, predicate: (arg0: T) => boolean): number {
 	for (let i = array.length - 1; i >= 0; i--) {
 		if (predicate(array[i])) {
 			return i
@@ -234,7 +239,7 @@ export function findLastIndex<T>(array: Array<T>, predicate: (arg0: T) => boolea
 	return -1
 }
 
-export function contains(theArray: Array<any>, elementToCheck: any): boolean {
+export function contains(theArray: ReadonlyArray<any>, elementToCheck: any): boolean {
 	return theArray.indexOf(elementToCheck) !== -1
 }
 
@@ -250,9 +255,9 @@ export function addAll(array: Array<any>, elements: Array<any>) {
 }
 
 export function removeAll(array: Array<any>, elements: Array<any>) {
-	elements.forEach((element) => {
+	for (const element of elements) {
 		remove(array, element)
-	})
+	}
 }
 
 /**
@@ -281,7 +286,7 @@ export function groupByAndMapUniquely<T, R, E>(iterable: Iterable<T>, discrimina
 export function groupByAndMap<T, R, E>(iterable: Iterable<T>, discriminator: (arg0: T) => R, mapper: (arg0: T) => E): Map<R, Array<E>> {
 	const map = new Map()
 
-	for (let el of iterable) {
+	for (const el of iterable) {
 		const key = discriminator(el)
 		getFromMap(map, key, () => []).push(mapper(el))
 	}
@@ -300,13 +305,28 @@ export function groupBy<T, R>(iterable: Iterable<T>, discriminator: (arg0: T) =>
 }
 
 /**
+ * Collect an iterable into a map based on {@param keyExtractor}.
+ */
+export function collectToMap<T, R>(iterable: Iterable<T>, keyExtractor: (element: T) => R): Map<R, T> {
+	const map = new Map()
+	for (const el of iterable) {
+		const key = keyExtractor(el)
+		if (map.has(key)) {
+			throw new Error(`The elements of iterable are not unique, duplicated key: ${key}`)
+		}
+		map.set(key, el)
+	}
+	return map
+}
+
+/**
  * split an array into chunks of a given size.
  * the last chunk will be smaller if there are less than chunkSize elements left.
  * @param chunkSize
  * @param array
  * @returns {Array<Array<T>>}
  */
-export function splitInChunks<T>(chunkSize: number, array: Array<T>): Array<Array<T>> {
+export function splitInChunks<T>(chunkSize: number, array: ReadonlyArray<T>): Array<Array<T>> {
 	return downcast(_chunk(chunkSize, array))
 }
 
@@ -314,7 +334,7 @@ export function splitUint8ArrayInChunks(chunkSize: number, array: Uint8Array): A
 	return downcast(_chunk(chunkSize, array))
 }
 
-function _chunk<T>(chunkSize: number, array: Array<T> | Uint8Array): Array<Array<T> | Uint8Array> {
+function _chunk<T>(chunkSize: number, array: ReadonlyArray<T> | Uint8Array): Array<Array<T> | Uint8Array> {
 	if (chunkSize < 1) {
 		return []
 	}
@@ -331,10 +351,6 @@ function _chunk<T>(chunkSize: number, array: Array<T> | Uint8Array): Array<Array
 	} while (end < array.length)
 
 	return chunks
-}
-
-export function flat<T>(arrays: ReadonlyArray<ReadonlyArray<T>>): Array<T> {
-	return arrays.flat()
 }
 
 /**
@@ -400,37 +416,37 @@ export function zip<A, B>(arr1: Array<A>, arr2: Array<B>): Array<[A, B]> {
 
 export function deduplicate<T>(arr: Array<T>, comp: (arg0: T, arg1: T) => boolean = (a, b) => a === b): Array<T> {
 	const deduplicated: T[] = []
-	arr.forEach((a) => {
+	for (const a of arr) {
 		const isDuplicate = deduplicated.some((b) => comp(a, b))
 
 		if (!isDuplicate) {
 			deduplicated.push(a)
 		}
-	})
+	}
 	return deduplicated
 }
 
 /**
  * http://jsfiddle.net/aryzhov/pkfst550/
  * Binary search in JavaScript.
- * Returns the index of of the element in a sorted array or (-n-1) where n is the insertion point for the new element.
+ * Returns the index of the element in a sorted array or (-n-1) where n is the insertion point for the new element.
  * Parameters:
- *     ar - A sorted array
- *     el - An element to search for
- *     compare_fn - A comparator function. The function takes two arguments: (a, b) and returns:
+ *     array - A sorted array
+ *     element - An element to search for
+ *     compareFn - A comparator function. The function takes two arguments: (a, b) and returns:
  *        a negative number  if a is less than b;
  *        0 if a is equal to b;
  *        a positive number of a is greater than b.
  * The array may contain duplicate elements. If there are more than one equal elements in the array,
  * the returned value can be the index of any one of the equal elements.
  */
-export function binarySearch<T>(ar: Array<T>, el: T, compare_fn: (arg0: T, arg1: T) => number): number {
-	var m = 0
-	var n = ar.length - 1
+export function binarySearch<T>(array: ReadonlyArray<T>, element: T, compareFn: (left: T, right: T) => number): number {
+	let m = 0
+	let n = array.length - 1
 
 	while (m <= n) {
-		var k = (n + m) >> 1
-		var cmp = compare_fn(el, ar[k])
+		const k = (n + m) >> 1
+		const cmp = compareFn(element, array[k])
 
 		if (cmp > 0) {
 			m = k + 1
@@ -464,10 +480,10 @@ export function union<T>(...iterables: Array<Iterable<T>>): Set<T> {
  * @template T
  * @param array1
  * @param array2
- * @param compare: compare items in the array for equality
+ * @param compare {(l: T, r: T) => boolean} compare items in the array for equality
  * @returns {Array<T>}
  */
-export function difference<T>(array1: ReadonlyArray<T>, array2: ReadonlyArray<T>, compare: (arg0: T, arg1: T) => boolean = (a, b) => a === b): Array<T> {
+export function difference<T>(array1: ReadonlyArray<T>, array2: ReadonlyArray<T>, compare: (l: T, r: T) => boolean = (a, b) => a === b): Array<T> {
 	return array1.filter((element1) => !array2.some((element2) => compare(element1, element2)))
 }
 
@@ -495,13 +511,24 @@ export function symmetricDifference<T>(set1: ReadonlySet<T>, set2: ReadonlySet<T
 }
 
 /**
- * Splits an array into two based on a predicate, where elements that match the predicate go into the left side
- * @param array
- * @param predicate
+ * Splits an array into two based on a predicate, where elements that match the predicate go into the left side.
+ *
+ * This exists in two overloads:
+ *  - one that requires a type guard. Specifically, if an item is A | B and type guard is "item is A" it returns [Array<A>, Array<B>]
+ *  - one that takes a plain predicate and returns two arrays of the same type, without type narrowing
+ *
+ * Please note that tsc cannot infer that a function is a type predicate/type guard. Declaring function as a type predicate is also unsafe.
+ * see: https://github.com/microsoft/TypeScript/issues/16069
  */
-export function partition<T>(array: Array<T>, predicate: (arg0: T) => boolean): [Array<T>, Array<T>] {
-	const left: T[] = []
-	const right: T[] = []
+export function partition<Generic, Specific extends Generic>(
+	array: ReadonlyArray<Generic>,
+	predicate: (item: Generic) => item is Specific,
+): [Array<Specific>, Array<Exclude<Generic, Specific>>]
+export function partition<TL>(array: ReadonlyArray<TL>, predicate: (item: TL) => boolean): [Array<TL>, Array<TL>]
+// this is an implementation signature and is not visible from the outside
+export function partition<T>(array: ReadonlyArray<T>, predicate: any): [Array<T>, Array<T>] {
+	const left: Array<T> = []
+	const right: Array<T> = []
 
 	for (let item of array) {
 		if (predicate(item)) {
@@ -515,15 +542,22 @@ export function partition<T>(array: Array<T>, predicate: (arg0: T) => boolean): 
 }
 
 /**
- * like partition(), but async
- * rejects if any of the predicates reject.
- * @param array
- * @param predicate
+ * Like {@link partition}, but async and only for TL = TR.
+ * Rejects if any of the predicates reject.
  */
-export async function partitionAsync<T>(array: Array<T>, predicate: (arg0: T) => Promise<boolean>): Promise<[Array<T>, Array<T>]> {
-	const mask: Array<boolean> = await Promise.all(array.map(predicate))
-	const [left, right] = partition(zip(mask, array), (item) => item[0])
-	return [left.map((i) => i[1]), right.map((i) => i[1])]
+export async function partitionAsync<T>(array: Array<T>, predicate: (item: T) => Promise<boolean>): Promise<[Array<T>, Array<T>]> {
+	const left: Array<T> = []
+	const right: Array<T> = []
+
+	for (let item of array) {
+		if (await predicate(item)) {
+			left.push(item)
+		} else {
+			right.push(item)
+		}
+	}
+
+	return [left, right]
 }
 
 /**
@@ -531,4 +565,36 @@ export async function partitionAsync<T>(array: Array<T>, predicate: (arg0: T) =>
  */
 export function arrayOf<T>(n: number, factory: (idx: number) => T): Array<T> {
 	return numberRange(0, n - 1).map(factory)
+}
+
+/**
+ * Destroy contents of the byte arrays passed. Useful for purging unwanted memory.
+ */
+export function zeroOut(...arrays: (Uint8Array | Int8Array)[]) {
+	for (const a of arrays) {
+		a.fill(0)
+	}
+}
+
+/**
+ * @return 1 if first is bigger than second, -1 if second is bigger than first and 0 otherwise
+ */
+export function compare(first: Uint8Array, second: Uint8Array): number {
+	if (first.length > second.length) {
+		return 1
+	} else if (first.length < second.length) {
+		return -1
+	}
+
+	for (let i = 0; i < first.length; i++) {
+		const a = first[i]
+		const b = second[i]
+		if (a > b) {
+			return 1
+		} else if (a < b) {
+			return -1
+		}
+	}
+
+	return 0
 }

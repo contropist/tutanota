@@ -1,14 +1,14 @@
-import { AlarmScheduler, AlarmSchedulerImpl } from "../../../src/calendar/date/AlarmScheduler.js"
-import o from "ospec"
+import { AlarmScheduler } from "../../../src/common/calendar/date/AlarmScheduler.js"
+import o from "@tutao/otest"
 import { DateTime } from "luxon"
-import { createAlarmInfo } from "../../../src/api/entities/sys/TypeRefs.js"
-import { createRepeatRule } from "../../../src/api/entities/sys/TypeRefs.js"
-import { EndType, RepeatPeriod } from "../../../src/api/common/TutanotaConstants.js"
-import { DateProvider } from "../../../src/api/common/DateProvider.js"
-import { SchedulerMock } from "../TestUtils.js"
+import { AlarmInfoTypeRef, DateWrapperTypeRef, RepeatRuleTypeRef } from "../../../src/common/api/entities/sys/TypeRefs.js"
+import { EndType, RepeatPeriod } from "../../../src/common/api/common/TutanotaConstants.js"
+import { DateProvider } from "../../../src/common/api/common/DateProvider.js"
+import { createTestEntity, SchedulerMock } from "../TestUtils.js"
+import { spy } from "@tutao/tutanota-test-utils"
 
 o.spec("AlarmScheduler", function () {
-	let alarmScheduler: AlarmSchedulerImpl
+	let alarmScheduler: AlarmScheduler
 	let scheduler: SchedulerMock
 	let now: DateTime
 	const dateProvider: DateProvider = {
@@ -18,7 +18,7 @@ o.spec("AlarmScheduler", function () {
 	o.beforeEach(function () {
 		now = DateTime.fromISO("2021-04-20T20:00Z")
 		scheduler = new SchedulerMock()
-		alarmScheduler = new AlarmSchedulerImpl(dateProvider, scheduler)
+		alarmScheduler = new AlarmScheduler(dateProvider, scheduler)
 	})
 	o.spec("scheduleAlarm", function () {
 		o("non-repeating", function () {
@@ -27,10 +27,10 @@ o.spec("AlarmScheduler", function () {
 				endTime: DateTime.fromISO("2021-04-21T20:30Z").toJSDate(),
 				summary: "summary",
 			}
-			const alarmInfo = createAlarmInfo({
+			const alarmInfo = createTestEntity(AlarmInfoTypeRef, {
 				trigger: "10M",
 			})
-			const notificationSender = o.spy()
+			const notificationSender = spy()
 			alarmScheduler.scheduleAlarm(eventInfo, alarmInfo, null, notificationSender)
 			const expectedAlarmTime = DateTime.fromISO("2021-04-21T19:50Z").toMillis()
 			const scheduled = scheduler.scheduledAt.get(expectedAlarmTime)
@@ -48,21 +48,21 @@ o.spec("AlarmScheduler", function () {
 				endTime: DateTime.fromISO("2021-04-21T20:30Z").toJSDate(),
 				summary: "summary",
 			}
-			const alarmInfo = createAlarmInfo({
+			const alarmInfo = createTestEntity(AlarmInfoTypeRef, {
 				trigger: "30M",
 			})
-			const repeatRule = createRepeatRule({
+			const repeatRule = createTestEntity(RepeatRuleTypeRef, {
 				frequency: RepeatPeriod.DAILY,
 				interval: "1",
 				endType: EndType.Count,
 				endValue: "3",
 				timeZone: "Europe/Berlin",
 			})
-			const notificationSender = o.spy()
+			const notificationSender = spy()
 			alarmScheduler.scheduleAlarm(eventInfo, alarmInfo, repeatRule, notificationSender)
 			const expectedTimes = [DateTime.fromISO("2021-04-21T19:30Z"), DateTime.fromISO("2021-04-22T19:30Z"), DateTime.fromISO("2021-04-23T19:30Z")]
 
-			for (const time of expectedTimes) {
+			for (const [idx, time] of expectedTimes.entries()) {
 				const scheduled = scheduler.scheduledAt.get(time.toMillis())
 
 				if (scheduled == null) {
@@ -74,9 +74,43 @@ o.spec("AlarmScheduler", function () {
 					days: 1,
 				})
 				scheduled.thunk()
-				o(notificationSender.callCount).equals(1)
-				// @ts-ignore
-				notificationSender.callCount = 0
+				o(notificationSender.callCount).equals(idx + 1)
+			}
+		})
+		o("repeating with exclusions", function () {
+			const eventInfo = {
+				startTime: DateTime.fromISO("2021-04-21T20:00:00Z").toJSDate(),
+				endTime: DateTime.fromISO("2021-04-21T20:30Z").toJSDate(),
+				summary: "summary",
+			}
+			const alarmInfo = createTestEntity(AlarmInfoTypeRef, {
+				trigger: "30M",
+			})
+			const repeatRule = createTestEntity(RepeatRuleTypeRef, {
+				frequency: RepeatPeriod.DAILY,
+				interval: "1",
+				endType: EndType.Count,
+				endValue: "3",
+				timeZone: "Europe/Berlin",
+				excludedDates: [createTestEntity(DateWrapperTypeRef, { date: DateTime.fromISO("2021-04-22T20:00Z").toJSDate() })],
+			})
+			const notificationSender = spy()
+			alarmScheduler.scheduleAlarm(eventInfo, alarmInfo, repeatRule, notificationSender)
+			const expectedTimes = [DateTime.fromISO("2021-04-21T19:30Z"), DateTime.fromISO("2021-04-23T19:30Z")]
+
+			for (const [idx, time] of expectedTimes.entries()) {
+				const scheduled = scheduler.scheduledAt.get(time.toMillis())
+
+				if (scheduled == null) {
+					const got = Array.from(scheduler.scheduledAt.keys()).map((t) => DateTime.fromMillis(t).toISO())
+					throw new Error(`Did not schedule at ${time.toISO()}, but ${got.join(",")}`)
+				}
+
+				now = now.plus({
+					days: 1,
+				})
+				scheduled.thunk()
+				o(notificationSender.callCount).equals(idx + 1)
 			}
 		})
 	})
@@ -87,11 +121,11 @@ o.spec("AlarmScheduler", function () {
 				endTime: DateTime.fromISO("2021-04-21T20:30Z").toJSDate(),
 				summary: "summary",
 			}
-			const alarmInfo = createAlarmInfo({
+			const alarmInfo = createTestEntity(AlarmInfoTypeRef, {
 				trigger: "10M",
 				alarmIdentifier: "identifier",
 			})
-			const notificationSender = o.spy()
+			const notificationSender = spy()
 			alarmScheduler.scheduleAlarm(eventInfo, alarmInfo, null, notificationSender)
 			const expectedAlarmTime = DateTime.fromISO("2021-04-21T19:50Z").toMillis()
 			const scheduled = scheduler.scheduledAt.get(expectedAlarmTime)
@@ -109,17 +143,17 @@ o.spec("AlarmScheduler", function () {
 				endTime: DateTime.fromISO("2021-04-21T20:30Z").toJSDate(),
 				summary: "summary",
 			}
-			const alarmInfo = createAlarmInfo({
+			const alarmInfo = createTestEntity(AlarmInfoTypeRef, {
 				trigger: "30M",
 			})
-			const repeatRule = createRepeatRule({
+			const repeatRule = createTestEntity(RepeatRuleTypeRef, {
 				frequency: RepeatPeriod.DAILY,
 				interval: "1",
 				endType: EndType.Count,
 				endValue: "3",
 				timeZone: "Europe/Berlin",
 			})
-			const notificationSender = o.spy()
+			const notificationSender = spy()
 			alarmScheduler.scheduleAlarm(eventInfo, alarmInfo, repeatRule, notificationSender)
 			const scheduled = Array.from(scheduler.scheduledAt.values()).map((idThunk) => idThunk.id)
 			o(scheduled.length).equals(1)

@@ -1,10 +1,16 @@
-import o from "ospec"
-import { ContactAddressTypeRef, ContactMailAddressTypeRef, ContactPhoneNumberTypeRef, createContact } from "../../../src/api/entities/tutanota/TypeRefs.js"
+import o from "@tutao/otest"
+import {
+	ContactAddressTypeRef,
+	ContactMailAddressTypeRef,
+	ContactPhoneNumberTypeRef,
+	ContactTypeRef,
+} from "../../../src/common/api/entities/tutanota/TypeRefs.js"
 import { neverNull } from "@tutao/tutanota-utils"
-import { vCardFileToVCards, vCardListToContacts } from "../../../src/contacts/VCardImporter.js"
+import { vCardFileToVCards, vCardListToContacts } from "../../../src/mail-app/contacts/VCardImporter.js"
 // @ts-ignore[untyped-import]
-import en from "../../../src/translations/en.js"
-import { lang } from "../../../src/misc/LanguageViewModel.js"
+import en from "../../../src/mail-app/translations/en.js"
+import { lang } from "../../../src/common/misc/LanguageViewModel.js"
+import { createTestEntity } from "../TestUtils.js"
 
 o.spec("VCardImporterTest", function () {
 	o.before(async function () {
@@ -15,7 +21,7 @@ o.spec("VCardImporterTest", function () {
 			globalThis.TextDecoder = window.TextDecoder
 		} else {
 			// @ts-ignore
-			globalThis.TextDecoder = (await import("util")).TextDecoder
+			globalThis.TextDecoder = (await import("node:util")).TextDecoder
 		}
 
 		lang.init(en)
@@ -37,7 +43,7 @@ BDAY:2001-01-01
 EMAIL;TYPE=WORK:k1576147@mvrht.net
 TEL;TYPE=CELL,WORK:123456789
 TEL;TYPE=VOICE,HOME:789456123
-ADR;TYPE=WORK:;;Strasse 30\, 67890 hamburg ;;;;
+ADR;TYPE=WORK:;;Strasse 30, 67890 hamburg ;;;;
 END:VCARD
 
 `
@@ -54,7 +60,7 @@ BDAY:2001-01-01
 EMAIL;TYPE=WORK:k1576147@mvrht.net
 TEL;TYPE=CELL,WORK:123456789
 TEL;TYPE=VOICE,HOME:789456123
-ADR;TYPE=WORK:;;Strasse 30\, 67890 hamburg ;;;;`,
+ADR;TYPE=WORK:;;Strasse 30, 67890 hamburg ;;;;`,
 		]
 		//prepares for further usage --> removes Begin and End tag and pushes the content between those tags into an array
 		o(vCardFileToVCards(str)!).deepEquals(expected)
@@ -79,7 +85,7 @@ BDAY:2001-01-01
 EMAIL;TYPE=WORK:k1576147@mvrht.net
 TEL;TYPE=CELL,WORK:123456789
 TEL;TYPE=VOICE,HOME:789456123
-ADR;TYPE=WORK:;;Strasse 30\, 67890 hamburg ;;;;
+ADR;TYPE=WORK:;;Strasse 30, 67890 hamburg ;;;;
 END:VCARD`
 		let expected = [
 			`VERSION:3.0
@@ -94,7 +100,7 @@ BDAY:2001-01-01
 EMAIL;TYPE=WORK:k1576147@mvrht.net
 TEL;TYPE=CELL,WORK:123456789
 TEL;TYPE=VOICE,HOME:789456123
-ADR;TYPE=WORK:;;Strasse 30\, 67890 hamburg ;;;;`,
+ADR;TYPE=WORK:;;Strasse 30, 67890 hamburg ;;;;`,
 		]
 		//Unfolding lines for content lines longer than 75 characters
 		o(vCardFileToVCards(str)!).deepEquals(expected)
@@ -151,10 +157,9 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 		o(vCardFileToVCards(str)!).deepEquals(expected)
 	})
 	o("testToContactNames", function () {
-		let a = ["N:Public\\\\;John\\;Quinlan;;Mr.;Esq.\nBDAY:2016-09-09\nADR:Die Heide 81\\nBasche\nNOTE:Hello World\\nHier ist ein Umbruch"]
+		let a = ["N:Public\\\\;John\\;Quinlan;Lange;Mr.;Esq.\nBDAY:2016-09-09\nADR:Die Heide 81\\nBasche\nNOTE:Hello World\\nHier ist ein Umbruch"]
 		let contacts = vCardListToContacts(a, "")
-		let b = createContact()
-		b._owner = ""
+		let b = createTestEntity(ContactTypeRef)
 		b._ownerGroup = ""
 		b.addresses[0] = {
 			_type: ContactAddressTypeRef,
@@ -163,12 +168,15 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 			customTypeName: "",
 			type: "2",
 		}
+		b.middleName = "Lange"
+		b.department = ""
 		b.firstName = "John;Quinlan"
 		b.lastName = "Public\\"
 		b.comment = "Hello World\nHier ist ein Umbruch"
 		b.company = ""
 		b.role = ""
 		b.title = "Mr."
+		b.nameSuffix = "Esq."
 		b.nickname = neverNull(null)
 		b.birthdayIso = "2016-09-09"
 		o(JSON.stringify(contacts[0])).equals(JSON.stringify(b))
@@ -176,8 +184,7 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 	o("testEmptyAddressElements", function () {
 		let a = ["N:Public\\\\;John\\;Quinlan;;Mr.;Esq.\nBDAY:2016-09-09\nADR:Die Heide 81;; ;;Basche"]
 		let contacts = vCardListToContacts(a, "")
-		let b = createContact()
-		b._owner = ""
+		let b = createTestEntity(ContactTypeRef)
 		b._ownerGroup = ""
 		b.addresses[0] = {
 			_type: ContactAddressTypeRef,
@@ -186,11 +193,14 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 			customTypeName: "",
 			type: "2",
 		}
+		b.middleName = ""
 		b.firstName = "John;Quinlan"
 		b.lastName = "Public\\"
 		b.comment = ""
+		b.department = ""
 		b.company = ""
 		b.role = ""
+		b.nameSuffix = "Esq."
 		b.title = "Mr."
 		b.nickname = neverNull(null)
 		b.birthdayIso = "2016-09-09"
@@ -199,8 +209,7 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 	o("testTooManySpaceElements", function () {
 		let a = ["N:Public\\\\; John\\; Quinlan;;Mr.    ;Esq.\nBDAY: 2016-09-09\nADR: Die Heide 81;;;; Basche"]
 		let contacts = vCardListToContacts(a, "")
-		let b = createContact()
-		b._owner = ""
+		let b = createTestEntity(ContactTypeRef)
 		b._ownerGroup = ""
 		b.addresses[0] = {
 			_type: ContactAddressTypeRef,
@@ -211,10 +220,13 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 		}
 		b.firstName = "John; Quinlan"
 		b.lastName = "Public\\"
+		b.middleName = ""
 		b.comment = ""
+		b.department = ""
 		b.company = ""
 		b.role = ""
 		b.title = "Mr."
+		b.nameSuffix = "Esq."
 		b.nickname = neverNull(null)
 		b.birthdayIso = "2016-09-09"
 		o(JSON.stringify(contacts[0])).equals(JSON.stringify(b))
@@ -229,9 +241,11 @@ ADR;TYPE=HOME,PREF:;;Humboldstrasse 5;\\nBerlin;;12345;Deutschland`,
 	o("testTypeInUserText", function () {
 		let a = ["EMAIL;TYPE=WORK:HOME@mvrht.net\nADR;TYPE=WORK:Street;HOME;;\nTEL;TYPE=WORK:HOME01923825434"]
 		let contacts = vCardListToContacts(a, "")
-		let b = createContact()
-		b._owner = ""
+		let b = createTestEntity(ContactTypeRef)
 		b._ownerGroup = ""
+		b.middleName = ""
+		b.department = ""
+		b.nameSuffix = ""
 		b.mailAddresses[0] = {
 			_type: ContactMailAddressTypeRef,
 			_id: neverNull(null),
@@ -361,18 +375,18 @@ END:VCARD`
 				"BEGIN:VCARD\n" +
 				"VERSION:4.0\n" +
 				"PRODID;VALUE=TEXT:-//ProtonMail//ProtonMail vCard 1.0.0//EN\n" +
-				"FN;PREF=1:johnsuser@test.tutanota.com\n" +
+				"FN;PREF=1:johnsuser@test.tuta.com\n" +
 				"UID:proton-autosave-19494094-e26d-4e59-b4fb-766afcf82fa5\n" +
-				"ITEM1.EMAIL;PREF=1:johnsuser@test.tutanota.com\n" +
+				"ITEM1.EMAIL;PREF=1:johnsuser@test.tuta.com\n" +
 				"END:VCARD"
 
 			let contacts = vCardListToContacts(neverNull(vCardFileToVCards(vCard)), "")
 			o(contacts.length).equals(1)
-			o(contacts[0].firstName).equals("johnsuser@test.tutanota.com")
+			o(contacts[0].firstName).equals("johnsuser@test.tuta.com")
 			o(contacts[0].lastName).equals("")
 			o(contacts[0].nickname).equals(null)
 			o(contacts[0].mailAddresses.length).equals(1)
-			o(contacts[0].mailAddresses[0].address).equals("johnsuser@test.tutanota.com")
+			o(contacts[0].mailAddresses[0].address).equals("johnsuser@test.tuta.com")
 		})
 		o("protonmail v4.0 complicated import", function () {
 			let vCard =

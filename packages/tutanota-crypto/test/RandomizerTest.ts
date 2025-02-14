@@ -1,4 +1,4 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import { random } from "../lib/random/Randomizer.js"
 import sjcl from "../lib/internal/sjcl.js"
 import { CryptoError } from "../lib/misc/CryptoError.js"
@@ -42,7 +42,7 @@ o.spec("Randomizer", function () {
 			},
 		])
 
-		for (var i = 1; i < 20; i++) {
+		for (let i = 1; i < 20; i++) {
 			let r = random.generateRandomData(i)
 			o(r.length).equals(i)
 		}
@@ -61,9 +61,9 @@ o.spec("Randomizer", function () {
 		let upperHalfCount = 0
 		let lowerHalfCount = 0
 
-		for (var i = 1; i <= runs; i++) {
+		for (let i = 1; i <= runs; i++) {
 			let r = random.generateRandomData(bytesPerRun)
-			r.forEach((number) => {
+			for (const number of r) {
 				results[number]++
 
 				if (number >= 128) {
@@ -71,14 +71,14 @@ o.spec("Randomizer", function () {
 				} else {
 					lowerHalfCount++
 				}
-			})
+			}
 		}
 
-		results.forEach((count) => {
+		for (const count of results) {
 			o(count >= 500).equals(true) // uniform distribution would mean that each possible number occured 625 times (80%)
-		})
+		}
 		let lowerHalfPercent = (100 / (runs * bytesPerRun)) * lowerHalfCount
-		o(lowerHalfPercent > 49 && lowerHalfPercent < 51).equals(true)("distribution should be nearly uniform") // FIXME generate image from RNG to visualize performance:
+		o(lowerHalfPercent > 49 && lowerHalfPercent < 51).equals(true)("distribution should be nearly uniform") // TODO generate image from RNG to visualize performance:
 		// http://boallen.com/random-numbers.html
 	})
 })

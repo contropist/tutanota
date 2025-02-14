@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // @ts-check
 
-import { Argument, Option, program } from "commander"
-import fs from "fs"
-import path from "path"
+import { Option, program } from "commander"
+import fs from "node:fs"
+import path from "node:path"
 import { $ } from "zx"
+import { calculateClientVersions } from "./versionUtils.js"
 
 await program
-	.addArgument(new Argument("which", "which version segment to bump").choices(["major", "minor", "patch"]).default("patch").argOptional())
 	.addOption(new Option("-p, --platform <platform>", "version for which platform to bump").choices(["all", "webdesktop", "android", "ios"]).default("all"))
 	.action(run)
 	.parseAsync(process.argv)
@@ -18,22 +18,24 @@ await program
  */
 
 /**
- * @param which {Which}
- * @param platform {undefined | "webdesktop" | "android" | "ios"}
+ * @param params {object}
+ * @param params.platform {undefined | "webdesktop" | "android" | "ios" | "all"}
  * @return {Promise<void>}
  */
-async function run(which, { platform }) {
-	console.log(`bumping ${which} version for ${platform ?? "all"}`)
-	const currentVersionString = await readCurrentVersion()
-	const currentVersion = parseCurrentVersion(currentVersionString)
-	const newVersion = makeNewVersion(currentVersion, which)
-	const newVersionString = newVersion.join(".")
+async function run({ platform }) {
+	console.log(`bumping version for ${platform ?? "all"}`)
+	const { currentVersion, currentVersionString, newVersionString } = await calculateClientVersions()
+	await bumpVersionInCargoWorkspace(newVersionString)
 
 	if (platform === "all" || platform === "webdesktop") {
 		await bumpWorkspaces(newVersionString)
 		await $`npm version --no-git-tag-version ${newVersionString}`
 
-		// Need to run npm i to update package-lock.json
+		// Need to clean and re-install to make sure that all packages
+		// are installed with the correct version. otherwise, npm list
+		// from the tutanota-3 postinstall script will complain about
+		// invalid installed versions after npm i.
+		await fs.promises.rm("./node_modules", { recursive: true })
 		await $`npm i`
 	}
 
@@ -42,31 +44,55 @@ async function run(which, { platform }) {
 	}
 
 	if (platform === "all" || platform === "android") {
-		await bumpAndroidVersion(currentVersion, newVersionString)
+		await bumpAndroidVersion("app-android/app/build.gradle")
+		await bumpAndroidVersion("app-android/calendar/build.gradle.kts")
+		await bumpAndroidVersionName(currentVersion, newVersionString, "app-android/app/build.gradle")
+		await bumpAndroidVersionName(currentVersion, newVersionString, "app-android/calendar/build.gradle.kts")
 	}
 
 	console.log(`Bumped version ${currentVersionString} -> ${newVersionString}`)
 }
 
-async function readCurrentVersion() {
-	return JSON.parse(await fs.promises.readFile("./package.json", { encoding: "utf8" })).version
-}
-
 /**
- * @param currentVersionString {string}
- * @return {number[]}
+ * @param newVersionString {string}
+ * @return {Promise<void>}
  */
-function parseCurrentVersion(currentVersionString) {
-	return currentVersionString.split(".").map((n) => parseInt(n, 10))
+async function bumpVersionInCargoWorkspace(newVersionString) {
+	const workspaceFilePath = "Cargo.toml"
+	const versionRegex = /\[workspace\.package]\nversion = ".*"/
+	const contents = await fs.promises.readFile(workspaceFilePath, "utf8")
+	let found = 0
+	const newContents = contents.replace(versionRegex, (_, __, ___, ____) => {
+		found += 1
+		return `[workspace.package]\nversion = "${newVersionString}"`
+	})
+
+	if (found !== 1) {
+		console.warn(`${workspaceFilePath} had an unexpected format and couldn't be updated. Is it corrupted?`)
+	} else {
+		console.log(`rust: Updated ${workspaceFilePath} package.version to ${newVersionString}`)
+		await fs.promises.writeFile(workspaceFilePath, newContents)
+		// regenerate the lockfile
+		await $`cargo update && cargo check --all`
+	}
 }
 
 /**
  * @param newVersionString {string}
  */
 async function bumpIosVersion(newVersionString) {
+	const calendarInfoPlistName = "app-ios/calendar/Info.plist"
 	const infoPlistName = "app-ios/tutanota/Info.plist"
-	const infoPlistContents = await fs.promises.readFile(infoPlistName, "utf8")
+	await replaceCfBundleVersion(infoPlistName, newVersionString)
+	await replaceCfBundleVersion(calendarInfoPlistName, newVersionString)
+	await replaceCfBundleVersion("app-ios/TutanotaNotificationExtension/Info.plist", newVersionString)
+}
 
+/**
+ * @param {string} filePath
+ */
+async function replaceCfBundleVersion(filePath, newVersionString) {
+	const infoPlistContents = await fs.promises.readFile(filePath, "utf8")
 	let found = 0
 	const newInfoPlistContents = infoPlistContents.replaceAll(
 		/<key>CFBundle(Short)?Version(String)?<\/key>\s+<string>(\d+\.\d+\.\d+)<\/string>/g,
@@ -77,57 +103,55 @@ async function bumpIosVersion(newVersionString) {
 	)
 
 	if (found !== 2) {
-		console.warn("app-ios/tutanota/Info.plist had an unexpected format and couldn't be updated. Is it corrupted?")
+		console.warn(`${filePath} had an unexpected format and couldn't be updated. Is it corrupted?`)
 	} else {
-		console.log(`iOS: Updated app-ios/tutanota/Info.plist to ${newVersionString}`)
-		await fs.promises.writeFile(infoPlistName, newInfoPlistContents)
+		console.log(`iOS: Updated ${filePath} to ${newVersionString}`)
+		await fs.promises.writeFile(filePath, newInfoPlistContents)
 	}
 }
 
 /**
- * @param currentVersion {number[]}
- * @param newVersionString {string}
+ * @param buildGradlePath {string}
  * @return {Promise<void>}
  */
-async function bumpAndroidVersion(currentVersion, newVersionString) {
-	const buildGradlePath = "app-android/app/build.gradle"
+async function bumpAndroidVersion(buildGradlePath) {
 	const buildGradleString = await fs.promises.readFile(buildGradlePath, "utf8")
-	const oldVersionCodeMatch = buildGradleString.match(/versionCode (\d+)/)
+
+	const kotlinRegex = /versionCode = (\d+)/
+	const groovyRegex = /versionCode (\d+)/
+
+	const versionRegex = new RegExp(buildGradlePath.endsWith("kts") ? kotlinRegex : groovyRegex)
+	const oldVersionCodeMatch = buildGradleString.match(versionRegex)
 	if (oldVersionCodeMatch == null) {
 		throw new Error(`Android: Could not find versionCode in ${buildGradlePath}! Is it corrupted?`)
 	}
+
 	const oldVersionCodeString = oldVersionCodeMatch[1]
-	const oldVersionCode = Number(oldVersionCodeString)
+	const oldVersionCode = parseInt(oldVersionCodeString, 10)
 	if (Number.isNaN(oldVersionCode)) {
 		throw new Error(`Android: Detected version code as ${oldVersionCodeMatch[1]} but it is not a number! Is it corrupted`)
 	}
+
 	const newVersionCode = oldVersionCode + 1
 	const newVersionCodeString = String(newVersionCode)
-	const newBuildGradleString = buildGradleString
-		.replace(new RegExp(currentVersion.join("\\.")), newVersionString)
-		.replace(new RegExp(/versionCode (\d+)/), `versionCode ${newVersionCodeString}`)
+
+	const versionCodeToWrite = `versionCode ${buildGradlePath.endsWith("kts") ? "= " : ""}${newVersionCodeString}`
+	const newBuildGradleString = buildGradleString.replace(new RegExp(versionRegex), versionCodeToWrite)
 	console.log(`Bumped Android versionCode: ${oldVersionCodeString} -> ${newVersionCodeString}`)
 	await fs.promises.writeFile(buildGradlePath, newBuildGradleString)
 }
 
 /**
  * @param currentVersion {number[]}
- * @param which {Which}
- * @return {number[]}
+ * @param newVersionString {string}
+ * @param buildGradlePath {string}
+ * @return {Promise<void>}
  */
-function makeNewVersion(currentVersion, which) {
-	const newVersion = currentVersion.slice()
-	if (which === "patch") {
-		newVersion[2]++
-	} else if (which === "minor") {
-		newVersion[1]++
-		newVersion[2] = 0
-	} else {
-		newVersion[0]++
-		newVersion[1] = 0
-		newVersion[2] = 0
-	}
-	return newVersion
+async function bumpAndroidVersionName(currentVersion, newVersionString, buildGradlePath) {
+	const buildGradleString = await fs.promises.readFile(buildGradlePath, "utf8")
+	const newBuildGradleString = buildGradleString.replace(new RegExp(currentVersion.join("\\.")), newVersionString)
+	console.log(`Bumped Android versionName: ${currentVersion.join("\\.")} -> ${newVersionString}`)
+	await fs.promises.writeFile(buildGradlePath, newBuildGradleString)
 }
 
 /**
@@ -160,10 +184,16 @@ async function getWorkspaces() {
  * @return {Promise<void>}
  */
 async function bumpWorkspaces(version) {
+	// if we don't first bump versions of packages and _then_
+	// update the inter-package dependencies we will get an error
+	// in the middle of the process because npm can't resolve something
 	const workspaces = await getWorkspaces()
-	for (let workspace of workspaces) {
-		const dependency = workspace.name
+	for (const workspace of workspaces) {
 		await bumpWorkspaceVersion(version, workspace)
+	}
+
+	for (const workspace of workspaces) {
+		const dependency = workspace.name
 		await updateDependencyForWorkspaces(version, dependency, workspaces)
 	}
 }
@@ -174,7 +204,8 @@ async function bumpWorkspaces(version) {
  * @return {Promise<void>}
  */
 async function bumpWorkspaceVersion(version, workspace) {
-	await $`npm version --no-git-tag-version --workspace=${workspace.name} ${version}`
+	// set --workspaces-update to false to not run install (it's slow, doesn't work sometimes and we don't need it)
+	await $`npm version --workspaces-update false --no-git-tag-version --workspace=${workspace.name} ${version}`
 }
 
 /**
@@ -195,16 +226,14 @@ async function readPackageJsonFromDir(directory) {
  */
 async function updateDependencyForWorkspaces(version, dependency, workspaces) {
 	await updateDependency({ version, dependency, directory: "." })
-	for (let workspace of workspaces) {
+	for (const workspace of workspaces) {
 		const directory = workspace.directory
 		await updateDependency({ version, dependency, directory })
 	}
 }
 
 /**
- * @param version {string}
- * @param dependency {string}
- * @param directory {string}
+ * @param {{version: string, dependency: string, directory: string}} params
  * @return {Promise<void>}
  */
 async function updateDependency({ version, dependency, directory }) {

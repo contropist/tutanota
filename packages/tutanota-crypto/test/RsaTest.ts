@@ -1,64 +1,55 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import { concat, hexToUint8Array, stringToUtf8Uint8Array, uint8ArrayToHex } from "@tutao/tutanota-utils"
-import type { RsaKeyPair } from "../lib/encryption/RsaKeyPair.js"
+import type { RsaKeyPair } from "../lib/index.js"
+import { KeyPairType, random } from "../lib/index.js"
 import {
 	_getPSBlock,
 	_keyArrayToHex,
 	_padAndUnpadLeadingZeros,
 	encode,
-	generateRsaKey,
-	hexToPrivateKey,
-	hexToPublicKey,
+	hexToRsaPrivateKey,
+	hexToRsaPublicKey,
 	i2osp,
 	mgf1,
 	oaepPad,
 	oaepUnpad,
-	privateKeyToHex,
-	publicKeyToHex,
 	rsaDecrypt,
 	rsaEncrypt,
+	rsaPrivateKeyToHex,
+	rsaPublicKeyToHex,
 } from "../lib/encryption/Rsa.js"
-import { parseBigInt } from "../lib/internal/crypto-jsbn-2012-08-09_1.js"
 import { SecureRandom } from "../lib/random/SecureRandom.js"
-import { random } from "../lib/random/Randomizer.js"
-import { CryptoError } from "../lib/misc/CryptoError.js"
+import { CryptoError } from "../lib/error.js"
+import { parseBigInt } from "../lib/internal/crypto-jsbn-2012-08-09_1.js"
 
 const originalRandom = random.generateRandomData
-o.spec("rsa", function () {
+
+const privateKey = hexToRsaPrivateKey(
+	"02008bb1bbcb2c6915c182b0c7cc93e1d8210181ffee4be4ae81f7a98fdba2d6e37cea72e2124ebb6b05d330ab1ddfbc6d85c9d1c90fc3b65bd9634c3b722fe77ab98f33cc28af975d51609e1c308324501d615cbb82836c33c2a240e00826ddf09460cee7a975c0607579d4f7b707e19287a1c754ba485e04aab664e44cae8fcab770b9bb5c95a271786aa79d6fa11dd21bdb3a08b679bd5f29fc95ab573a3dabcbd8e70aaec0cc2a817eefbc886d3eafea96abd0d5e364b83ccf74f4d18b3546b014fa24b90134179ed952209971211c623a2743da0c3236abd512499920a75651482b43b27c18d477e8735935425933d8f09a12fbf1950cf8a381ef5f2400fcf90200816022249104e1f94e289b6284b36d8f63ee1a31806852965be0d632fc25389ac02795e88eb254f4181bc2def00f7affa5627d6bf43e37e2a56c3cc20c4bbe058cf2d3e9fa759d1f78f3f5f797fd5195644e95fad1ecac235e51e72aa59476f374952b486e9db4b818157d362e3e638ee9edca329c4336df43fd3cd327f8542d1add9798af1d6a9e8cf8f54dd0b6a6f9ed9c3f5d803c220716757871e1442ef407ffe5df44c364bf57a60551b681173747b8df8e4138101f1d048cc1941a5d4c1fd3eda5bc96496eb1892477d811b845a7c9b3333e700989a1134e8f65edbf3a8332baa7195eb6aa33591b6ab41ec8215c6487979df5cf1b9736fd4fea73eee102000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e7a2e7a5cc651614fd17eb10765ef63462e5767745fc849e97095319d42f8cbb1485aba0f590b33208e666e949db0465e483a122467f771a986da6855abb148d0b5c1eefb08636d0aeb36b8ec161497cc9a64704f0976aceb33d09af5408ded1aec771b534f9a27fd9dc3303146ce98872915ed730ed9661eec46b8c0d6b6d37020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009a632cb2e0a17ee6e363e3e056e5170480a3790023e342cb221431be37d63e692ce572390a379cf470c8a9fa4251a0af84d746b79ff91f6dcf168417137150d93049098ef747a601825982cbbd1ac1c20b3f3ee97b25e1739c31b43e78fc1cd53134dc4e82ebf98c720c34852fbd2288370421b848575f4d054e1d1e66b47f4f02000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b09e8b48e56fd2859072135f4b129f62546228914b80fed239d1f756436f3a3c4faa98b2336bf0e6ded86771cc49beb1beab0b4b2a3bf8e20385e029e083b368d4579a9322a343da9ccadbe14edc527f5ef6754273fcd088e92c4a5d30934eeaccfcf05bbe17f66acc0055b92c72db229a50f3e2db40dda0b0c17e4b9cd3e3c30200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000088861ee6e7e1a7f8c1287a40ce56b3ae159b79caf7f166057fd35fd1984aead1d313eb982942d897088d4a52b606bd13b9632d7400112b0bcdcf596b9693e42ccb982acdb43a35c0abe63fd5af1a54312604fdbb365d5f2afefaad2b798d6869d6a3aa15fb8c75170f5b5fae4f72ef7089462c136c55673f12ebeab0119e97dd02000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d8538fe6ebe9514412692fc985f8fd62b237c51c160c3d49aeeafffa057f2feff8f29040a205895b61dfa3f6188851021dc9e50152f3ea69746f5eb491af4a6dde21db9fa2c6fa61198ea02d6b600ed4267c3871af686c8db12e4bcbaaaa552e157e66fda90d34fce11cfd0f5eea6fbb236818070fb3a13751ad408e4231f499",
+)
+const publicKey = hexToRsaPublicKey(
+	"02008bb1bbcb2c6915c182b0c7cc93e1d8210181ffee4be4ae81f7a98fdba2d6e37cea72e2124ebb6b05d330ab1ddfbc6d85c9d1c90fc3b65bd9634c3b722fe77ab98f33cc28af975d51609e1c308324501d615cbb82836c33c2a240e00826ddf09460cee7a975c0607579d4f7b707e19287a1c754ba485e04aab664e44cae8fcab770b9bb5c95a271786aa79d6fa11dd21bdb3a08b679bd5f29fc95ab573a3dabcbd8e70aaec0cc2a817eefbc886d3eafea96abd0d5e364b83ccf74f4d18b3546b014fa24b90134179ed952209971211c623a2743da0c3236abd512499920a75651482b43b27c18d477e8735935425933d8f09a12fbf1950cf8a381ef5f2400fcf9",
+)
+
+const RSA_TEST_KEYPAIR: RsaKeyPair = { keyPairType: KeyPairType.RSA, privateKey, publicKey }
+
+o.spec("RsaTest", function () {
 	o.afterEach(function () {
 		random.generateRandomData = originalRandom
 	})
 
-	/**
-	 * Reuse the key pair to save time
-	 */
-	let _keyPair: RsaKeyPair
-
-	function _getKeyPair(): RsaKeyPair {
-		if (!_keyPair) {
-			_keyPair = generateRsaKey()
-		}
-
-		return _keyPair
-	}
-
 	o("hex key conversion", function () {
-		let keyPair = _getKeyPair()
+		const keyPair = RSA_TEST_KEYPAIR
 
-		let hexPrivateKey = privateKeyToHex(keyPair.privateKey)
-		let hexPublicKey = publicKeyToHex(keyPair.publicKey)
-		o(privateKeyToHex(hexToPrivateKey(hexPrivateKey))).equals(hexPrivateKey)
-		o(publicKeyToHex(hexToPublicKey(hexPublicKey))).equals(hexPublicKey)
+		let hexPrivateKey = rsaPrivateKeyToHex(keyPair.privateKey)
+		let hexPublicKey = rsaPublicKeyToHex(keyPair.publicKey)
+		o(rsaPrivateKeyToHex(hexToRsaPrivateKey(hexPrivateKey))).equals(hexPrivateKey)
+		o(rsaPublicKeyToHex(hexToRsaPublicKey(hexPublicKey))).equals(hexPublicKey)
 	})
-	o("invalid hex key conversion", function (done) {
-		let hexPublicKey = "hello"
+	o("invalid hex key conversion", function () {
+		const hexPublicKey = "hello"
 
-		try {
-			hexToPublicKey(hexPublicKey)
-		} catch (e) {
-			o(e instanceof CryptoError).equals(true)
-			done()
-		}
+		o(() => hexToRsaPublicKey(hexPublicKey)).throws(CryptoError)
 	})
 	o("that hex keys have an even number of characters", function () {
 		let privateKey: any[] = []
@@ -107,12 +98,12 @@ o.spec("rsa", function () {
 		o(_keyArrayToHex(privateKey).length % 2).equals(0)
 	})
 	o("rsa key roundtrip", function () {
-		let keyPair = _getKeyPair()
+		let keyPair = RSA_TEST_KEYPAIR
 
-		let hexPrivateKey = privateKeyToHex(keyPair.privateKey)
-		o(hexPrivateKey).equals(privateKeyToHex(hexToPrivateKey(hexPrivateKey)))
-		let hexPublicKey = publicKeyToHex(keyPair.publicKey)
-		o(hexPublicKey).equals(publicKeyToHex(hexToPublicKey(hexPublicKey)))
+		let hexPrivateKey = rsaPrivateKeyToHex(keyPair.privateKey)
+		o(hexPrivateKey).equals(rsaPrivateKeyToHex(hexToRsaPrivateKey(hexPrivateKey)))
+		let hexPublicKey = rsaPublicKeyToHex(keyPair.publicKey)
+		o(hexPublicKey).equals(rsaPublicKeyToHex(hexToRsaPublicKey(hexPublicKey)))
 		let plain = hexToUint8Array("88888888888888888888888888888888") // = 16 byte sym key
 
 		let encrypted = rsaEncrypt(keyPair.publicKey, plain, random.generateRandomData(32))
@@ -122,7 +113,9 @@ o.spec("rsa", function () {
 	o("rsa encrypt longer result", function () {
 		// This input makes JSBN produce leading zeroes in byte output and we need to take this into account
 		const keyPair = {
+			keyPairType: KeyPairType.RSA,
 			publicKey: {
+				keyPairType: KeyPairType.RSA,
 				version: 0,
 				keyLength: 2048,
 				modulus:
@@ -159,7 +152,9 @@ o.spec("rsa", function () {
 		// This combination produces encrypted data with length of 254 and we pad have to pad it to 256
 		// We use fixed keypair and salt to reproduce this error each time
 		const keyPair = {
+			keyPairType: KeyPairType.RSA,
 			publicKey: {
+				keyPairType: KeyPairType.RSA,
 				version: 0,
 				keyLength: 2048,
 				modulus:
@@ -193,7 +188,7 @@ o.spec("rsa", function () {
 		const plainAgain = rsaDecrypt(keyPair.privateKey, encrypted)
 		o(Array.from(plainAgain)).deepEquals(Array.from(plain))
 	})
-	o("test randomizer adapter", function (done) {
+	o("test randomizer adapter", function () {
 		let a: number[] = []
 		a.length = 100
 		let seed = new Uint8Array(a.length)
@@ -217,44 +212,33 @@ o.spec("rsa", function () {
 		}
 		o(error?.message).equals("test randomizer adapter")
 		o(error instanceof CryptoError).equals(true)
-		done()
 	})
-	o("test decrypt with invalid key", function (done) {
+	o("test decrypt with invalid key", function () {
 		let rsaPrivateHexKey =
 			"02008e8bf43e2990a46042da8168aebec699d62e1e1fd068c5582fd1d5433cee8c8b918799e8ee1a22dd9d6e21dd959d7faed8034663225848c21b88c2733c73788875639425a87d54882285e598bf7e8c83861e8b77ab3cf62c53d35e143cee9bb8b3f36850aebd1548c1881dc7485bb51aa13c5a0391b88a8d7afce88ecd4a7e231ca7cfd063216d1d573ad769a6bb557c251ad34beb393a8fff4a886715315ba9eac0bc31541999b92fcb33d15efd2bd50bf77637d3fc5ba1c21082f67281957832ac832fbad6c383779341555993bd945659d7797b9c993396915e6decee9da2d5e060c27c3b5a9bc355ef4a38088af53e5f795ccc837f45d0583052547a736f02002a7622214a3c5dda96cf83f0ececc3381c06ccce69446c54a299fccef49d929c1893ae1326a9fe6cc9727f00048b4ff7833d26806d40a31bbf1bf3e063c779c61c41b765a854fd1338456e691bd1d48571343413479cf72fa920b34b9002fbbbff4ea86a3042fece17683686a055411357a824a01f8e3b277dd54c690d59fd4c8258009707d917ce43d4a337dc58bb55394c4f87b902e7f78fa0abe35e35444bda46bfbc38cf87c60fbe5c4beff49f8e6ddbf50d6caafeb92a6ccef75474879bdb82c9c9c5c35611207dbdb7601c87b254927f4d9fd25ba7694987b5ca70c8184058a91e86cb974a2b7694d6bb08a349b953e4c9a017d9eecada49eb2981dfe10100c7905e44c348447551bea10787da3aa869bbe45f10cff87688e2696474bd18405432f4846dcee886d2a967a61c1adb9a9bc08d75cee678053bf41262f0d9882c230bd5289518569714b961cec3072ed2900f52c9cdc802ee4e63781a3c4acaee4347bd9ab701399a0b96cdf22a75501f7f232069e7f00f5649be5ac3d73edd970100b6dbc3e909e1b69ab3f5dd6a55d7cc68d2b803d3da16941410ab7a5b963e5c50316a52380d4b571633d870ca746b4d6f36e0a9d90cf96a2ddb9c61d5bc9dbe74473f0be99f3642100c1b8ad9d592c6a28fa6570ccbb3f7bb86be8056f76473b978a55d458343dba3d0dcaf152d225f20ccd384706dda9dd2fb0f5f6976e603e901002fd80cc1af8fc3d9dc9f373bf6f5fada257f46610446d7ea9326b4ddc09f1511571e6040df929b6cb754a5e4cd18234e0dc93c20e2599eaca29301557728afdce50a1130898e2c344c63a56f4c928c472f027d76a43f2f74b2966654e3df8a8754d9fe3af964f1ca5cbceae3040adc0ab1105ad5092624872b66d79bdc1ed6410100295bc590e4ea4769f04030e747293b138e6d8e781140c01755b9e33fe9d88afa9c62a6dc04adc0b1c5e23388a71249fe589431f664c7d8eb2c5bcf890f53426b7c5dd72ced14d1965d96b12e19ef4bbc22ef858ae05c01314a05b673751b244d93eb1b1088e3053fa512f50abe1da314811f6a3a1faeadb9b58d419052132e59010032611a3359d91ce3567675726e48aca0601def22111f73a9fea5faeb9a95ec37754d2e52d7ae9444765c39c66264c02b38d096df1cebe6ea9951676663301e577fa5e3aec29a660e0fff36389671f47573d2259396874c33069ddb25dd5b03dcbf803272e68713c320ef7db05765f1088473c9788642e4b80a8eb40968fc0d7c"
 		// use an invalid key. value is changed: ---------||
 		let rsaPublicHexKey =
 			"02008e8bf43e2990a46042da8168aebed699d62e1e1fd068c5582fd1d5433cee8c8b918799e8ee1a22dd9d6e21dd959d7faed8034663225848c21b88c2733c73788875639425a87d54882285e598bf7e8c83861e8b77ab3cf62c53d35e143cee9bb8b3f36850aebd1548c1881dc7485bb51aa13c5a0391b88a8d7afce88ecd4a7e231ca7cfd063216d1d573ad769a6bb557c251ad34beb393a8fff4a886715315ba9eac0bc31541999b92fcb33d15efd2bd50bf77637d3fc5ba1c21082f67281957832ac832fbad6c383779341555993bd945659d7797b9c993396915e6decee9da2d5e060c27c3b5a9bc355ef4a38088af53e5f795ccc837f45d0583052547a736f"
-		let privateKey = hexToPrivateKey(rsaPrivateHexKey)
-		let publicKey = hexToPublicKey(rsaPublicHexKey)
+		let privateKey = hexToRsaPrivateKey(rsaPrivateHexKey)
+		let publicKey = hexToRsaPublicKey(rsaPublicHexKey)
 		let plain = hexToUint8Array("88888888888888888888888888888888") // = 16 byte sym key
 
 		let encrypted = rsaEncrypt(publicKey, plain, random.generateRandomData(32))
 
-		try {
-			rsaDecrypt(privateKey, encrypted)
-		} catch (e) {
-			o(e instanceof CryptoError).equals(true)
-			done()
-		}
+		o.check(() => rsaDecrypt(privateKey, encrypted)).throws(CryptoError)
 	})
-	o("test decrypt invalid data", function (done) {
+	o("test decrypt invalid data", function () {
 		let rsaPrivateHexKey =
 			"02008e8bf43e2990a46042da8168aebec699d62e1e1fd068c5582fd1d5433cee8c8b918799e8ee1a22dd9d6e21dd959d7faed8034663225848c21b88c2733c73788875639425a87d54882285e598bf7e8c83861e8b77ab3cf62c53d35e143cee9bb8b3f36850aebd1548c1881dc7485bb51aa13c5a0391b88a8d7afce88ecd4a7e231ca7cfd063216d1d573ad769a6bb557c251ad34beb393a8fff4a886715315ba9eac0bc31541999b92fcb33d15efd2bd50bf77637d3fc5ba1c21082f67281957832ac832fbad6c383779341555993bd945659d7797b9c993396915e6decee9da2d5e060c27c3b5a9bc355ef4a38088af53e5f795ccc837f45d0583052547a736f02002a7622214a3c5dda96cf83f0ececc3381c06ccce69446c54a299fccef49d929c1893ae1326a9fe6cc9727f00048b4ff7833d26806d40a31bbf1bf3e063c779c61c41b765a854fd1338456e691bd1d48571343413479cf72fa920b34b9002fbbbff4ea86a3042fece17683686a055411357a824a01f8e3b277dd54c690d59fd4c8258009707d917ce43d4a337dc58bb55394c4f87b902e7f78fa0abe35e35444bda46bfbc38cf87c60fbe5c4beff49f8e6ddbf50d6caafeb92a6ccef75474879bdb82c9c9c5c35611207dbdb7601c87b254927f4d9fd25ba7694987b5ca70c8184058a91e86cb974a2b7694d6bb08a349b953e4c9a017d9eecada49eb2981dfe10100c7905e44c348447551bea10787da3aa869bbe45f10cff87688e2696474bd18405432f4846dcee886d2a967a61c1adb9a9bc08d75cee678053bf41262f0d9882c230bd5289518569714b961cec3072ed2900f52c9cdc802ee4e63781a3c4acaee4347bd9ab701399a0b96cdf22a75501f7f232069e7f00f5649be5ac3d73edd970100b6dbc3e909e1b69ab3f5dd6a55d7cc68d2b803d3da16941410ab7a5b963e5c50316a52380d4b571633d870ca746b4d6f36e0a9d90cf96a2ddb9c61d5bc9dbe74473f0be99f3642100c1b8ad9d592c6a28fa6570ccbb3f7bb86be8056f76473b978a55d458343dba3d0dcaf152d225f20ccd384706dda9dd2fb0f5f6976e603e901002fd80cc1af8fc3d9dc9f373bf6f5fada257f46610446d7ea9326b4ddc09f1511571e6040df929b6cb754a5e4cd18234e0dc93c20e2599eaca29301557728afdce50a1130898e2c344c63a56f4c928c472f027d76a43f2f74b2966654e3df8a8754d9fe3af964f1ca5cbceae3040adc0ab1105ad5092624872b66d79bdc1ed6410100295bc590e4ea4769f04030e747293b138e6d8e781140c01755b9e33fe9d88afa9c62a6dc04adc0b1c5e23388a71249fe589431f664c7d8eb2c5bcf890f53426b7c5dd72ced14d1965d96b12e19ef4bbc22ef858ae05c01314a05b673751b244d93eb1b1088e3053fa512f50abe1da314811f6a3a1faeadb9b58d419052132e59010032611a3359d91ce3567675726e48aca0601def22111f73a9fea5faeb9a95ec37754d2e52d7ae9444765c39c66264c02b38d096df1cebe6ea9951676663301e577fa5e3aec29a660e0fff36389671f47573d2259396874c33069ddb25dd5b03dcbf803272e68713c320ef7db05765f1088473c9788642e4b80a8eb40968fc0d7c"
 		let rsaPublicHexKey =
 			"02008e8bf43e2990a46042da8168aebec699d62e1e1fd068c5582fd1d5433cee8c8b918799e8ee1a22dd9d6e21dd959d7faed8034663225848c21b88c2733c73788875639425a87d54882285e598bf7e8c83861e8b77ab3cf62c53d35e143cee9bb8b3f36850aebd1548c1881dc7485bb51aa13c5a0391b88a8d7afce88ecd4a7e231ca7cfd063216d1d573ad769a6bb557c251ad34beb393a8fff4a886715315ba9eac0bc31541999b92fcb33d15efd2bd50bf77637d3fc5ba1c21082f67281957832ac832fbad6c383779341555993bd945659d7797b9c993396915e6decee9da2d5e060c27c3b5a9bc355ef4a38088af53e5f795ccc837f45d0583052547a736f"
-		let privateKey = hexToPrivateKey(rsaPrivateHexKey)
-		let publicKey = hexToPublicKey(rsaPublicHexKey)
+		let privateKey = hexToRsaPrivateKey(rsaPrivateHexKey)
+		let publicKey = hexToRsaPublicKey(rsaPublicHexKey)
 		let plain = hexToUint8Array("88888888888888888888888888888888") // = 16 byte sym key
 
 		let encrypted = rsaEncrypt(publicKey, plain, random.generateRandomData(32))
 
-		try {
-			rsaDecrypt(privateKey, concat(encrypted, stringToUtf8Uint8Array("hello")))
-		} catch (e) {
-			o(e instanceof CryptoError).equals(true)
-			done()
-		}
+		o.check(() => rsaDecrypt(privateKey, concat(encrypted, stringToUtf8Uint8Array("hello")))).throws(CryptoError)
 	})
 
 	/********************************* OAEP *********************************/

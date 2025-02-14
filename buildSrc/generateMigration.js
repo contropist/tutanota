@@ -1,10 +1,11 @@
 import fs from "fs-extra"
 import { Argument, InvalidArgumentError, program } from "commander"
-import path from "path"
+import path from "node:path"
 import { fileExists } from "./buildUtils.js"
+
 await program
 	.addArgument(
-		new Argument("app", "Which tutanota application needs a migration").choices(["accounting", "base", "gossip", "monitor", "storage", "sys", "tutanota"]),
+		new Argument("app", "Which tuta application needs a migration").choices(["accounting", "base", "gossip", "monitor", "storage", "sys", "tutanota"]),
 	)
 	.addArgument(new Argument("version", "Which version of the given app needs a migration").argParser(validateNumberArg))
 	.action(run)
@@ -31,7 +32,7 @@ export const ${app}${version}: OfflineMigration = {
 \t}
 }
 `.trimStart()
-	const outputName = path.resolve(`./src/api/worker/offline/migrations/${app}-v${version}.ts`)
+	const outputName = path.resolve(`./src/common/api/worker/offline/migrations/${app}-v${version}.ts`)
 
 	if (await fileExists(outputName)) {
 		console.error("That migration already exists!")

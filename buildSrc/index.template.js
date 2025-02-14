@@ -8,7 +8,7 @@ function unsupported(e) {
 	document.body.appendChild(img)
 
 	const h1 = document.createElement("h1")
-	h1.innerText = "Tutanota"
+	h1.innerText = "Tuta Mail"
 	h1.style.fontFamily = "sans-serif"
 	h1.style.fontSize = "40px"
 	h1.style.textAlign = "center"
@@ -31,9 +31,9 @@ function unsupported(e) {
 
 	const link = document.createElement("a")
 	if (isAndroidApp) {
-		link.href = "https://tutanota.com/faq/#webview"
+		link.href = "https://tuta.com/faq/#webview"
 	} else {
-		link.href = "https://tutanota.com/faq/#browser-support"
+		link.href = "https://tuta.com/faq/#browser-support"
 	}
 
 	link.target = "_blank"
@@ -46,7 +46,7 @@ function unsupported(e) {
 }
 
 try {
-	System.import("./app.js").catch(unsupported)
+	import("./app.js").catch(unsupported)
 } catch (e) {
 	unsupported(e)
 }

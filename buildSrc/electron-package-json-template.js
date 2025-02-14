@@ -1,14 +1,23 @@
-import path from "path"
-import { readFileSync } from "fs"
-import { getElectronVersion, getInstalledModuleVersion } from "./buildUtils.js"
+import path from "node:path"
+import { readFileSync } from "node:fs"
+import { getElectronVersion } from "./getInstalledModuleVersion.js"
 
 /**
  * This is used for launching electron:
  * 1. copied to app-desktop/build from make.js
- * 2. copied to app-desktop/build/dist from dist.js (DesktopBuilder)
+ * 2. copied to app-desktop/build from dist.js (DesktopBuilder)
+ *
+ * @param p {object}
+ * @param p.nameSuffix {string}
+ * @param p.version {string}
+ * @param p.updateUrl {string}
+ * @param p.iconPath {string}
+ * @param p.sign {boolean}
+ * @param [p.notarize] {boolean}
+ * @param [p.unpacked] {boolean}
+ * @param p.architecture
  */
-
-export default async function generateTemplate({ nameSuffix, version, updateUrl, iconPath, sign, notarize, unpacked }) {
+export default async function generateTemplate({ nameSuffix, version, updateUrl, iconPath, sign, notarize, unpacked, architecture }) {
 	const appName = "tutanota-desktop" + nameSuffix
 	const appId = "de.tutao.tutanota" + nameSuffix
 	if (process.env.JENKINS_HOME && process.env.DEBUG_SIGN) throw new Error("Tried to DEBUG_SIGN in CI!")
@@ -20,6 +29,7 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 		version: version,
 		author: "Tutao GmbH",
 		description: "The desktop client for Tutanota, the secure e-mail service.",
+		type: "module",
 		scripts: {
 			start: "electron .",
 		},
@@ -46,7 +56,6 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 				debugKey,
 			],
 			pollingInterval: 1000 * 60 * 60 * 3, // 3 hours
-			webAssetsPath: ".",
 			iconName: "logo-solo-red.png",
 			fileManagerTimeout: 30000,
 			// true if this version checks its updates. use to prevent local builds from checking sigs.
@@ -67,14 +76,12 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 				runAsTrayApp: true,
 			},
 		},
-		dependencies: {
-			"electron-updater": await getInstalledModuleVersion("electron-updater", log),
-		},
+		dependencies: {},
 		build: {
 			electronVersion: await getElectronVersion(log),
 			icon: iconPath,
 			appId: appId,
-			productName: nameSuffix.length > 0 ? nameSuffix.slice(1) + " Tutanota Desktop" : "Tutanota Desktop",
+			productName: nameSuffix.length > 0 ? nameSuffix.slice(1) + " Tuta Mail" : "Tuta Mail",
 			artifactName: "${name}-${os}.${ext}",
 			asarUnpack: "desktop/*.node",
 			afterSign: notarize ? "buildSrc/notarize.cjs" : undefined,
@@ -103,7 +110,7 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 				to: "./icons/",
 			},
 			win: {
-				// relative to the project dirm which is ./build/dist/
+				// relative to the project dirm which is ./build/
 				extraFiles: ["mapirs.dll"],
 				verifyUpdateCodeSignature: sign,
 				signDlls: sign,
@@ -113,7 +120,7 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 				target: [
 					{
 						target: unpacked ? "dir" : "nsis",
-						arch: "x64",
+						arch: architecture,
 					},
 				],
 			},
@@ -137,21 +144,21 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 					LSUIElement: 1, //hide dock icon on startup
 				},
 				target: unpacked
-					? [{ target: "dir", arch: "x64" }]
+					? [{ target: "dir", arch: architecture }]
 					: [
 							{
 								target: "zip",
-								arch: "x64",
+								arch: architecture,
 							},
 							{
 								target: "dmg",
-								arch: "x64",
+								arch: architecture,
 							},
 					  ],
 			},
 			linux: {
 				icon: path.join(path.dirname(iconPath), "icon/"),
-				synopsis: "Tutanota Desktop Client",
+				synopsis: "Tuta Mail Desktop Client",
 				category: "Network",
 				desktop: {
 					StartupWMClass: appName,
@@ -159,7 +166,7 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 				target: [
 					{
 						target: unpacked ? "dir" : "AppImage",
-						arch: "x64",
+						arch: architecture,
 					},
 				],
 			},

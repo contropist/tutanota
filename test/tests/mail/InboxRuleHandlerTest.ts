@@ -1,13 +1,12 @@
-import o from "ospec"
-import { _findMatchingRule, _matchesRegularExpression } from "../../../src/mail/model/InboxRuleHandler.js"
-import type { InboxRule } from "../../../src/api/entities/tutanota/TypeRefs.js"
-import { createInboxRule } from "../../../src/api/entities/tutanota/TypeRefs.js"
+import o from "@tutao/otest"
+import { _findMatchingRule, _matchesRegularExpression } from "../../../src/mail-app/mail/model/InboxRuleHandler.js"
+import type { InboxRule, Mail } from "../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { InboxRuleTypeRef, MailAddressTypeRef, MailTypeRef } from "../../../src/common/api/entities/tutanota/TypeRefs.js"
 import { EntityRestClientMock } from "../api/worker/rest/EntityRestClientMock.js"
-import { EntityClient } from "../../../src/api/common/EntityClient.js"
-import type { Mail } from "../../../src/api/entities/tutanota/TypeRefs.js"
-import { createMail } from "../../../src/api/entities/tutanota/TypeRefs.js"
-import { createMailAddress } from "../../../src/api/entities/tutanota/TypeRefs.js"
-import { InboxRuleType } from "../../../src/api/common/TutanotaConstants.js"
+import { EntityClient } from "../../../src/common/api/common/EntityClient.js"
+import { InboxRuleType } from "../../../src/common/api/common/TutanotaConstants.js"
+import { createTestEntity } from "../TestUtils.js"
+
 o.spec("InboxRuleHandlerTest", function () {
 	o.spec("Test _matchesRegularExpression", function () {
 		o(" check invalid regular expressions", function () {
@@ -67,11 +66,11 @@ o.spec("InboxRuleHandlerTest", function () {
 		const restClient: EntityRestClientMock = new EntityRestClientMock()
 		const entityClient = new EntityClient(restClient)
 		o("check FROM_EQUALS is applied to from", async function () {
-			const rules: InboxRule[] = [_createRule("sender@tutanota.com", InboxRuleType.FROM_EQUALS, ["ruleTarget", "ruleTarget"])]
+			const rules: InboxRule[] = [_createRule("sender@tuta.com", InboxRuleType.FROM_EQUALS, ["ruleTarget", "ruleTarget"])]
 
 			const mail = _createMailWithDifferentEnvelopeSender()
 
-			const rule = await _findMatchingRule(entityClient, mail, rules)
+			const rule = await _findMatchingRule(this.mailFacade, mail, rules)
 			o(rule).notEquals(null)
 
 			if (rule) {
@@ -83,7 +82,7 @@ o.spec("InboxRuleHandlerTest", function () {
 
 			const mail = _createMailWithDifferentEnvelopeSender()
 
-			const rule = await _findMatchingRule(entityClient, mail, rules)
+			const rule = await _findMatchingRule(this.mailFacade, mail, rules)
 			o(rule).notEquals(null)
 
 			if (rule) {
@@ -94,16 +93,16 @@ o.spec("InboxRuleHandlerTest", function () {
 })
 
 function _createMailWithDifferentEnvelopeSender(): Mail {
-	let mail = createMail()
-	let sender = createMailAddress()
-	sender.address = "sender@tutanota.com"
+	let mail = createTestEntity(MailTypeRef)
+	let sender = createTestEntity(MailAddressTypeRef)
+	sender.address = "sender@tuta.com"
 	mail.sender = sender
 	mail.differentEnvelopeSender = "differentenvelopsender@something.com"
 	return mail
 }
 
 function _createRule(value: string, type?: string, targetFolder?: IdTuple): InboxRule {
-	let rule = createInboxRule()
+	let rule = createTestEntity(InboxRuleTypeRef)
 	rule.value = value
 	rule.type = type ? type : InboxRuleType.SUBJECT_CONTAINS
 	rule.targetFolder = targetFolder ? targetFolder : ["empty", "empty"]

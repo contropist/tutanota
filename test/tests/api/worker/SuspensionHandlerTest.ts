@@ -1,28 +1,27 @@
-import o from "ospec"
-import { SuspensionHandler } from "../../../../src/api/worker/SuspensionHandler.js"
+import o from "@tutao/otest"
+import { SuspensionHandler } from "../../../../src/common/api/worker/SuspensionHandler.js"
 import { deferWithHandler, downcast } from "@tutao/tutanota-utils"
-import type { WorkerImpl } from "../../../../src/api/worker/WorkerImpl.js"
-import type { SystemTimeout } from "../../../../src/api/common/utils/Scheduler.js"
+import type { SystemTimeout } from "../../../../src/common/api/common/utils/Scheduler.js"
+import { InfoMessageHandler } from "../../../../src/common/gui/InfoMessageHandler.js"
+import { matchers, object } from "testdouble"
+import { spy, verify } from "@tutao/tutanota-test-utils"
 
 o.spec("SuspensionHandler test", () => {
 	let suspensionHandler
-	let workerMock: WorkerImpl
 	let systemTimeout
+	let messageHandlerMock: InfoMessageHandler
 	o.beforeEach(() => {
-		workerMock = downcast({
-			infoMessage: o.spy(),
-		})
-
+		messageHandlerMock = object()
 		let timeoutFn = () => {}
 
 		systemTimeout = {
-			setTimeout: o.spy((fn) => {
+			setTimeout: spy((fn) => {
 				timeoutFn = fn
 			}),
-			clearTimeout: o.spy(),
+			clearTimeout: spy(),
 			finish: () => timeoutFn(),
 		}
-		suspensionHandler = new SuspensionHandler(workerMock, downcast<SystemTimeout>(systemTimeout))
+		suspensionHandler = new SuspensionHandler(messageHandlerMock, downcast<SystemTimeout>(systemTimeout))
 	})
 	o.spec("activating suspension", function () {
 		o(
@@ -43,8 +42,7 @@ o.spec("SuspensionHandler test", () => {
 				suspensionHandler.activateSuspensionIfInactive(100)
 				o(systemTimeout.setTimeout.callCount).equals(0)
 				o(suspensionHandler.isSuspended()).equals(true)
-				// @ts-ignore
-				o(workerMock.infoMessage.callCount).equals(0)
+				verify(messageHandlerMock.onInfoMessage(matchers.anything()), { times: 0 })
 			}),
 		)
 		o(
@@ -62,8 +60,7 @@ o.spec("SuspensionHandler test", () => {
 				suspensionHandler._isSuspended = false
 				suspensionHandler._hasSentInfoMessage = false
 				suspensionHandler.activateSuspensionIfInactive(100)
-				// @ts-ignore
-				o(workerMock.infoMessage.callCount).equals(1)
+				verify(messageHandlerMock.onInfoMessage(matchers.anything()), { times: 1 })
 			}),
 		)
 		o(
@@ -72,8 +69,7 @@ o.spec("SuspensionHandler test", () => {
 				suspensionHandler._isSuspended = false
 				suspensionHandler._hasSentInfoMessage = true
 				suspensionHandler.activateSuspensionIfInactive(100)
-				// @ts-ignore
-				o(workerMock.infoMessage.callCount).equals(0)
+				verify(messageHandlerMock.onInfoMessage(matchers.anything()), { times: 0 })
 			}),
 		)
 	})
@@ -82,7 +78,7 @@ o.spec("SuspensionHandler test", () => {
 			"should not defer request when not suspended",
 			node(async function () {
 				suspensionHandler._isSuspended = false
-				const request = o.spy(() => Promise.resolve("ok"))
+				const request = spy(() => Promise.resolve("ok"))
 				const returnValue = await suspensionHandler.deferRequest(request)
 				o(request.callCount).equals(1)
 				o(returnValue).equals("ok")
@@ -92,7 +88,7 @@ o.spec("SuspensionHandler test", () => {
 			"should defer request when suspended",
 			node(async function () {
 				suspensionHandler._isSuspended = true
-				const request = o.spy(() => Promise.resolve("ok"))
+				const request = spy(() => Promise.resolve("ok"))
 				const returnedPromise = suspensionHandler.deferRequest(request)
 
 				suspensionHandler._deferredRequests[0].resolve()
@@ -108,11 +104,11 @@ o.spec("SuspensionHandler test", () => {
 		node(function () {
 			o("should execute suspended requests in order and reset", async function () {
 				const results: string[] = []
-				const request1 = o.spy(async () => {
+				const request1 = spy(async () => {
 					results.push("ok!")
 				})
 				const deferral1 = deferWithHandler(request1)
-				const request2 = o.spy(async () => {
+				const request2 = spy(async () => {
 					results.push("wow!")
 				})
 				const deferral2 = deferWithHandler(request2)
@@ -128,8 +124,8 @@ o.spec("SuspensionHandler test", () => {
 			o(
 				"should ignore rejecting requests and keep going",
 				node(async function () {
-					const requestThatRejects = o.spy(() => Promise.reject("oh no!"))
-					const requestThatResolves = o.spy(() => Promise.resolve("ok!"))
+					const requestThatRejects = spy(() => Promise.reject("oh no!"))
+					const requestThatResolves = spy(() => Promise.resolve("ok!"))
 					const deferralThatRejects = deferWithHandler(requestThatRejects)
 					const deferralThatResolves = deferWithHandler(requestThatResolves)
 

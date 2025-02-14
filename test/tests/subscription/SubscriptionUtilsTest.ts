@@ -1,55 +1,23 @@
-import o from "ospec"
-import { hasAllFeaturesInPlan } from "../../../src/subscription/SubscriptionUtils.js"
-o.spec("subscription utils hasAllFeaturesInPlan", function () {
-	o("hasAllFeaturesInPlan Premium", function () {
-		const currentSubscription = {
-			nbrOfAliases: 5,
-			orderNbrOfAliases: 5,
-			storageGb: 1,
-			orderStorageGb: 1,
-			sharing: false,
-			business: false,
-			whitelabel: false,
-		}
-		o(hasAllFeaturesInPlan(currentSubscription, currentSubscription)).equals(true)("identical properties match")
+import o from "@tutao/otest"
+import { NewPaidPlans, PlanType } from "../../../src/common/api/common/TutanotaConstants.js"
+import { IServiceExecutor } from "../../../src/common/api/common/ServiceRequest.js"
+import { createUpgradePriceServiceMock, PLAN_PRICES } from "./priceTestUtils.js"
+import { clone } from "@tutao/tutanota-utils"
 
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { orderNbrOfAliases: 0 }))).equals(true)(
-			"more orderNbrOfAliases in current -> match",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { orderNbrOfAliases: 10 }))).equals(true)(
-			"less orderNbrOfAliases in current -> match",
-		)
+import { getAvailableMatchingPlans } from "../../../src/common/subscription/SubscriptionUtils.js"
 
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { storageGb: 10 }))).equals(false)(
-			"less storage in current -> doesn't match",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { nbrOfAliases: 15 }))).equals(false)(
-			"less aliases in current -> doesn't match",
-		)
+o.spec("SubscriptionUtilsTest", function () {
+	let serviceExecutor: IServiceExecutor
+	o.beforeEach(async function () {
+		serviceExecutor = createUpgradePriceServiceMock(clone(PLAN_PRICES))
+	})
 
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { storageGb: 0 }))).equals(true)("more storage in current -> match")
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { nbrOfAliases: 2 }))).equals(true)(
-			"more aliases in current ->  match",
-		)
-
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { business: true }))).equals(false)(
-			"business feature in config, but not current",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { sharing: true }))).equals(false)(
-			"sharing feature in config, but not current",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { whitelabel: true }))).equals(false)(
-			"whitelabel feature in config, but not current",
-		)
-
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { business: false }))).equals(true)(
-			"business feature in current, but not config",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { sharing: false }))).equals(true)(
-			"sharing feature in current, but not config",
-		)
-		o(hasAllFeaturesInPlan(currentSubscription, Object.assign({}, currentSubscription, { whitelabel: false }))).equals(true)(
-			"whitelabel feature in current, but not config",
-		)
+	o.spec("getAvailableMatchingPlans", function () {
+		o("no filter returns all plans", async function () {
+			o(await getAvailableMatchingPlans(serviceExecutor, () => true)).deepEquals(NewPaidPlans)
+		})
+		o("filter for whitelabel", async function () {
+			o(await getAvailableMatchingPlans(serviceExecutor, (configuration) => configuration.whitelabel)).deepEquals([PlanType.Unlimited])
+		})
 	})
 })

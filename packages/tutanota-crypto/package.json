@@ -1,8 +1,12 @@
 {
 	"name": "@tutao/tutanota-crypto",
-	"version": "3.107.3",
+	"version": "270.250213.0",
 	"license": "GPL-3.0",
 	"main": "./dist/index.js",
+	"exports": {
+		".": "./dist/index.js",
+		"./error.js": "./dist/error.js"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/tutao/tutanota.git",
@@ -17,11 +21,15 @@
 	"files": [
 		"dist/*",
 		"README.md",
-		"LICENSE.txt"
+		"LICENSE.txt",
+		"tsconfig.json"
 	],
+	"dependencies": {
+		"@tutao/tutanota-error": "270.250213.0"
+	},
 	"devDependencies": {
-		"typescript": "4.5.4",
-		"@tutao/tutanota-utils": "3.107.3",
-		"ospec": "https://github.com/tutao/ospec.git#0472107629ede33be4c4d19e89f237a6d7b0cb11"
+		"typescript": "5.3.3",
+		"@tutao/tutanota-utils": "270.250213.0",
+		"@tutao/otest": "270.250213.0"
 	}
 }

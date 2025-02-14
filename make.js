@@ -1,12 +1,13 @@
-import { Argument, program } from "commander"
+import { Argument, Option, program } from "commander"
 import { runDevBuild } from "./buildSrc/DevBuild.js"
-import { spawn } from "child_process"
+import { spawn } from "node:child_process"
 import { chalk } from "zx"
 
 await program
 	.usage("[options] [test|prod|local|host <url>]")
 	.addArgument(new Argument("stage").choices(["test", "prod", "local", "host"]).default("local").argOptional())
 	.addArgument(new Argument("host").argOptional())
+	.addOption(new Option("-a, --app <type>", "app to build").choices(["mail", "calendar"]).default("mail"))
 	.option("-c, --clean", "Clean build directory")
 	.option("-d, --desktop", "Assemble & start desktop client")
 	.option("-v, --verbose", "activate verbose loggin in desktop client")
@@ -18,7 +19,7 @@ await program
 			process.exit(1)
 		}
 
-		const { clean, watch, serve, desktop, ignoreMigrations } = options
+		const { clean, watch, serve, desktop, ignoreMigrations, app } = options
 
 		if (serve) {
 			console.error("--serve is currently disabled, point any server to ./build directory instead or build desktop")
@@ -33,13 +34,17 @@ await program
 				serve,
 				desktop,
 				ignoreMigrations,
+				app,
 			})
 
 			if (desktop) {
+				const buildDir = app === "calendar" ? "build-calendar-app" : "build"
+				const env = Object.assign({}, process.env, { ELECTRON_ENABLE_SECURITY_WARNINGS: "TRUE" })
 				// we don't want to quit here because we want to keep piping output to our stdout.
-				spawn("./start-desktop.sh", {
+				spawn("npx", [`electron --inspect=5858 ./${buildDir}/`], {
+					shell: true,
 					stdio: "inherit",
-					env: options.verbose ? Object.assign({}, process.env, { ELECTRON_ENABLE_LOGGING: 1 }) : process.env,
+					env: options.verbose ? Object.assign({}, env, { ELECTRON_ENABLE_LOGGING: 1 }) : env,
 				})
 			} else if (!watch) {
 				// Don't wait for spawned child processes to exit (because they never will)

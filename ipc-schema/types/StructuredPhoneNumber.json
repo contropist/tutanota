@@ -1,0 +1,9 @@
+{
+	"name": "StructuredPhoneNumber",
+	"type": "struct",
+	"fields": {
+		"number": "string",
+		"type": "ContactPhoneNumberType",
+		"customTypeName": "string"
+	}
+}

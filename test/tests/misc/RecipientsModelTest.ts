@@ -1,24 +1,25 @@
-import o from "ospec"
-import { RecipientsModel, ResolveMode } from "../../../src/api/main/RecipientsModel.js"
-import { ContactModel } from "../../../src/contacts/model/ContactModel.js"
-import { LoginController } from "../../../src/api/main/LoginController.js"
-import { MailFacade } from "../../../src/api/worker/facades/MailFacade.js"
-import { EntityClient } from "../../../src/api/common/EntityClient.js"
-import { func, instance, object, replace, when } from "testdouble"
-import { createGroupInfo, createGroupMembership, createPublicKeyReturn, createUser } from "../../../src/api/entities/sys/TypeRefs.js"
-import { Recipient, RecipientType } from "../../../src/api/common/recipients/Recipient.js"
-import { ContactTypeRef, createContact, createContactMailAddress } from "../../../src/api/entities/tutanota/TypeRefs.js"
-import { UserController } from "../../../src/api/main/UserController.js"
-import { GroupType } from "../../../src/api/common/TutanotaConstants.js"
+import o from "@tutao/otest"
+import { RecipientsModel, ResolveMode } from "../../../src/common/api/main/RecipientsModel.js"
+import { LoginController } from "../../../src/common/api/main/LoginController.js"
+import { MailFacade } from "../../../src/common/api/worker/facades/lazy/MailFacade.js"
+import { EntityClient } from "../../../src/common/api/common/EntityClient.js"
+import { func, instance, object, when } from "testdouble"
+import { GroupInfoTypeRef, GroupMembershipTypeRef, UserTypeRef } from "../../../src/common/api/entities/sys/TypeRefs.js"
+import { Recipient, RecipientType } from "../../../src/common/api/common/recipients/Recipient.js"
+import { ContactMailAddressTypeRef, ContactTypeRef } from "../../../src/common/api/entities/tutanota/TypeRefs.js"
+import { UserController } from "../../../src/common/api/main/UserController.js"
+import { GroupType } from "../../../src/common/api/common/TutanotaConstants.js"
 import { verify } from "@tutao/tutanota-test-utils"
 import { defer, delay } from "@tutao/tutanota-utils"
+import { createTestEntity } from "../TestUtils.js"
+import { ContactModel } from "../../../src/common/contactsFunctionality/ContactModel.js"
 
 o.spec("RecipientsModel", function () {
 	const contactListId = "contactListId"
 	const contactElementId = "contactElementId"
 	const contactId = [contactListId, contactElementId] as const
 
-	const tutanotaAddress = "test@tutanota.com"
+	const tutanotaAddress = "test@tuta.com"
 	const otherAddress = "test@dudanoda.com"
 
 	let contactModelMock: ContactModel
@@ -32,25 +33,18 @@ o.spec("RecipientsModel", function () {
 	o.beforeEach(function () {
 		contactModelMock = object()
 
-		userControllerMock = object()
-		replace(
-			userControllerMock,
-			"user",
-			createUser({
+		userControllerMock = {
+			user: createTestEntity(UserTypeRef, {
 				memberships: [
-					createGroupMembership({
+					createTestEntity(GroupMembershipTypeRef, {
 						groupType: GroupType.Contact,
 					}),
 				],
 			}),
-		)
-		replace(
-			userControllerMock,
-			"userGroupInfo",
-			createGroupInfo({
+			userGroupInfo: createTestEntity(GroupInfoTypeRef, {
 				mailAddress: "test@example.com",
 			}),
-		)
+		} satisfies Partial<UserController> as UserController
 
 		loginControllerMock = object()
 		when(loginControllerMock.getUserController()).thenReturn(userControllerMock)
@@ -76,6 +70,7 @@ o.spec("RecipientsModel", function () {
 
 	o("loads contact with id", async function () {
 		const contact = makeContactStub(contactId, otherAddress)
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
 		when(entityClientMock.load(ContactTypeRef, contactId)).thenResolve(contact)
 		const recipient = await model.resolve({ address: otherAddress, contact: contactId }, ResolveMode.Eager).resolved()
 		o(recipient.contact).deepEquals(contact)
@@ -86,6 +81,7 @@ o.spec("RecipientsModel", function () {
 		const id = [contactListId, contactId] as const
 		const contact = makeContactStub(id, otherAddress)
 		when(contactModelMock.searchForContact(otherAddress)).thenResolve(contact)
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
 		const recipient = await model.resolve({ address: otherAddress }, ResolveMode.Eager).resolved()
 		o(recipient.contact).deepEquals(contact)
 	})
@@ -101,6 +97,7 @@ o.spec("RecipientsModel", function () {
 	})
 
 	o("uses name from contact if name not provided", async function () {
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
 		const recipient = await model
 			.resolve({ address: tutanotaAddress, contact: makeContactStub(contactId, tutanotaAddress, "Pizza", "Hawaii") }, ResolveMode.Eager)
 			.resolved()
@@ -108,14 +105,16 @@ o.spec("RecipientsModel", function () {
 	})
 
 	o("infers internal recipient from tutanota address, otherwise unknown", async function () {
-		o(model.resolve({ address: tutanotaAddress }, ResolveMode.Eager).type).equals(RecipientType.INTERNAL)("Tutanota address")
-		o(model.resolve({ address: otherAddress }, ResolveMode.Eager).type).equals(RecipientType.UNKNOWN)("Internal address")
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
+		// using lazy mode to not wait for the resolution and to not have async task running after the test is done
+		o(model.resolve({ address: tutanotaAddress }, ResolveMode.Lazy).type).equals(RecipientType.INTERNAL)("Tutanota address")
+		o(model.resolve({ address: otherAddress }, ResolveMode.Lazy).type).equals(RecipientType.UNKNOWN)("Internal address")
 	})
 
 	o("correctly resolves type for non tutanota addresses", async function () {
 		const internalAddress = "internal@email.com"
 		const externalAddress = "external@email.com"
-		when(mailFacadeMock.getRecipientKeyData(internalAddress)).thenResolve(createPublicKeyReturn())
+		when(mailFacadeMock.getRecipientKeyData(internalAddress)).thenResolve(object())
 		when(mailFacadeMock.getRecipientKeyData(externalAddress)).thenResolve(null)
 
 		const internal = await model.resolve({ address: internalAddress }, ResolveMode.Eager).resolved()
@@ -150,6 +149,7 @@ o.spec("RecipientsModel", function () {
 	})
 
 	o("lazy resolution isn't triggered until `resolved` is called", async function () {
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
 		const recipient = model.resolve({ address: otherAddress }, ResolveMode.Lazy)
 
 		// see that the resolution doesn't start straight away
@@ -170,6 +170,7 @@ o.spec("RecipientsModel", function () {
 	o("passes resolved recipient to callback", async function () {
 		const contact = makeContactStub(contactId, otherAddress, "Re", "Cipient")
 		when(contactModelMock.searchForContact(otherAddress)).thenResolve(contact)
+		when(contactModelMock.getContactListId()).thenResolve("contactListId")
 		when(mailFacadeMock.getRecipientKeyData(otherAddress)).thenResolve(null)
 
 		const handler = func() as (recipient: Recipient) => void
@@ -181,9 +182,9 @@ o.spec("RecipientsModel", function () {
 })
 
 function makeContactStub(id: IdTuple, mailAddress: string, firstName?: string, lastName?: string) {
-	return createContact({
+	return createTestEntity(ContactTypeRef, {
 		_id: id,
-		mailAddresses: [createContactMailAddress({ address: mailAddress })],
+		mailAddresses: [createTestEntity(ContactMailAddressTypeRef, { address: mailAddress })],
 		firstName: firstName ?? "",
 		lastName: lastName ?? "",
 	})

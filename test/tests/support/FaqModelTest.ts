@@ -1,7 +1,8 @@
-import o from "ospec"
-import { FaqModel } from "../../../src/support/FaqModel.js"
+import o from "@tutao/otest"
+import { FaqModel } from "../../../src/common/support/FaqModel.js"
 import { downcast } from "@tutao/tutanota-utils"
-import { lang } from "../../../src/misc/LanguageViewModel.js"
+import { lang } from "../../../src/common/misc/LanguageViewModel.js"
+import { spy } from "@tutao/tutanota-test-utils"
 
 async function collect(generator: AsyncGenerator): Promise<Array<unknown>> {
 	const result: Array<unknown> = []
@@ -42,7 +43,7 @@ o.spec("FaqModelTest", function () {
 	o.beforeEach(function () {
 		lang.code = "de"
 		faqModel = new FaqModel()
-		fetchFaqSpy = o.spy((language) => {
+		fetchFaqSpy = spy((language) => {
 			if (language === "en") {
 				return Promise.resolve(enTranslations)
 			} else if (language === "de") {
@@ -63,8 +64,8 @@ o.spec("FaqModelTest", function () {
 	o("test init", async function () {
 		await faqModel.init()
 		o(fetchFaqSpy.callCount).equals(2)
-		o(fetchFaqSpy.calls[0].args[0]).equals("en")
-		o(fetchFaqSpy.calls[1].args[0]).equals("de")
+		o(fetchFaqSpy.calls[0][0]).equals("en")
+		o(fetchFaqSpy.calls[1][0]).equals("de")
 		o(faqModel.faqLanguages.fallback).deepEquals(enTranslations)
 		o(faqModel.faqLanguages.translations).deepEquals(deTranslations)
 		const list = faqModel.getList()
@@ -74,7 +75,7 @@ o.spec("FaqModelTest", function () {
 		o(faqEntry.title).equals("Heading")
 		//use current language for missing title
 		o(faqEntry.text).equals("Inhalt")
-		o(faqEntry.tags).equals("a, b, c")
+		o(faqEntry.tags).deepEquals(["a", "b", "c"])
 		// do not invoke fetch faq entries twice
 		await faqModel.init()
 		o(fetchFaqSpy.callCount).equals(2)
@@ -83,8 +84,8 @@ o.spec("FaqModelTest", function () {
 		lang.code = "es"
 		await faqModel.init()
 		o(fetchFaqSpy.callCount).equals(2)
-		o(fetchFaqSpy.calls[0].args[0]).equals("en")
-		o(fetchFaqSpy.calls[1].args[0]).equals("es")
+		o(fetchFaqSpy.calls[0][0]).equals("en")
+		o(fetchFaqSpy.calls[1][0]).equals("es")
 		o(faqModel.faqLanguages.fallback).deepEquals(enTranslations)
 		o(faqModel.faqLanguages.translations).deepEquals({
 			keys: {},
@@ -95,10 +96,10 @@ o.spec("FaqModelTest", function () {
 		const faqEntry = list[0]
 		o(faqEntry.title).equals("Heading")
 		o(faqEntry.text).equals("Content")
-		o(faqEntry.tags).equals("a, b, c")
+		o(faqEntry.tags).deepEquals(["a", "b", "c"])
 	})
 	o("init and search with failing fetch faq entries", async function () {
-		fetchFaqSpy = o.spy((language) => {
+		fetchFaqSpy = spy((language) => {
 			return {
 				keys: {},
 				code: language,
@@ -107,8 +108,8 @@ o.spec("FaqModelTest", function () {
 		downcast(faqModel).fetchFAQ = fetchFaqSpy
 		await faqModel.init()
 		o(fetchFaqSpy.callCount).equals(2)
-		o(fetchFaqSpy.calls[0].args[0]).equals("en")
-		o(fetchFaqSpy.calls[1].args[0]).equals("de")
+		o(fetchFaqSpy.calls[0][0]).equals("en")
+		o(fetchFaqSpy.calls[1][0]).equals("de")
 		o(faqModel.faqLanguages.fallback).deepEquals({
 			keys: {},
 			code: "en",
@@ -128,7 +129,7 @@ o.spec("FaqModelTest", function () {
 				id: "entry",
 				title: "<mark>Heading</mark>",
 				text: "Inhalt",
-				tags: "a, b, c",
+				tags: ["a", "b", "c"],
 			},
 		])
 	})
@@ -139,7 +140,7 @@ o.spec("FaqModelTest", function () {
 				id: "otherEntry",
 				title: "Eine Überschrift",
 				text: "Ganz langer Inhalt",
-				tags: "<mark>tag</mark>",
+				tags: ["<mark>tag</mark>"],
 			},
 		])
 	})
@@ -150,13 +151,13 @@ o.spec("FaqModelTest", function () {
 				id: "entry",
 				title: "Heading",
 				text: "<mark>Inhalt</mark>",
-				tags: "a, b, c",
+				tags: ["a", "b", "c"],
 			},
 			{
 				id: "otherEntry",
 				title: "Eine Überschrift",
 				text: "Ganz langer <mark>Inhalt</mark>",
-				tags: "tag",
+				tags: ["tag"],
 			},
 		])
 	})

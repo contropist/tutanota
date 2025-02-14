@@ -1,10 +1,10 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import n from "../nodemocker.js"
-import { DesktopContextMenu } from "../../../src/desktop/DesktopContextMenu.js"
+import { DesktopContextMenu } from "../../../src/common/desktop/DesktopContextMenu.js"
 import { downcast } from "@tutao/tutanota-utils"
 import { object } from "testdouble"
-import { WindowManager } from "../../../src/desktop/DesktopWindowManager.js"
-import ContextMenuParams = Electron.ContextMenuParams
+import { WindowManager } from "../../../src/common/desktop/DesktopWindowManager.js"
+import { ContextMenuParams } from "electron"
 
 o.spec("DesktopContextMenu Test", () => {
 	const standardMocks = () => {
@@ -56,7 +56,11 @@ o.spec("DesktopContextMenu Test", () => {
 			misspelledWord: "",
 		}
 		contextMenu.open(contextMenuParams as ContextMenuParams)
-		downcast(electronMock.MenuItem).mockedInstances.forEach((i) => i.click && i.click(undefined, undefined))
-		downcast(electronMock.MenuItem).mockedInstances.forEach((i) => i.click && i.click(undefined, "nowebcontents"))
+		for (const i of downcast(electronMock.MenuItem).mockedInstances) {
+			i.click?.(undefined)
+		}
+		for (const i of downcast(electronMock.MenuItem).mockedInstances) {
+			i.click?.(undefined)
+		}
 	})
 })

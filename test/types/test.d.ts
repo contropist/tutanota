@@ -2,9 +2,10 @@
 
 /** Modifies each function interface to add spy attributes (for convenience). */
 interface Function {
-	callCount: number
-	args: any[]
-	calls: { this: this; args: any[] }[]
+	readonly callCount: number
+	readonly args: any[]
+	readonly calls: any[][]
+	readonly invocations: any[][]
 }
 
 /**
@@ -18,11 +19,3 @@ declare function browser<F>(f: F): F
  * Declaration is imprecise but it's easier to use this way.
  */
 declare function node<F>(f: F): F
-
-/**
- * Should be injected during build time.
- * See sqliteNativeBannerPlugin.
- */
-declare const buildOptions: {
-	readonly sqliteNativePath: string
-}

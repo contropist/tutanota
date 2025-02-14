@@ -2,12 +2,12 @@
 	"app": "storage",
 	"versions": [
 		{
-			"version": 6,
+			"version": 11,
 			"changes": [
 				{
 					"name": "AddValue",
 					"sourceType": "BlobServerAccessInfo",
-					"info": "AddValue BlobServerAccessInfo/expires/192."
+					"info": "AddValue BlobServerAccessInfo/tokenKind/209."
 				}
 			]
 		}

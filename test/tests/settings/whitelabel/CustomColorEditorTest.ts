@@ -1,15 +1,16 @@
-import o from "ospec"
-import { CustomColorsEditorViewModel } from "../../../../src/settings/whitelabel/CustomColorsEditorViewModel.js"
-import { ThemeController } from "../../../../src/gui/ThemeController.js"
-import { createWhitelabelConfig } from "../../../../src/api/entities/sys/TypeRefs.js"
-import { createDomainInfo } from "../../../../src/api/entities/sys/TypeRefs.js"
+import o from "@tutao/otest"
+import { CustomColorsEditorViewModel } from "../../../../src/common/settings/whitelabel/CustomColorsEditorViewModel.js"
+import { ThemeController } from "../../../../src/common/gui/ThemeController.js"
+import { DomainInfoTypeRef, WhitelabelConfigTypeRef } from "../../../../src/common/api/entities/sys/TypeRefs.js"
 import { downcast } from "@tutao/tutanota-utils"
-import type { ThemeCustomizations } from "../../../../src/misc/WhitelabelCustomizations.js"
-import { EntityClient } from "../../../../src/api/common/EntityClient.js"
-import { themes } from "../../../../src/gui/builtinThemes.js"
-import type { LoginController } from "../../../../src/api/main/LoginController.js"
+import type { ThemeCustomizations } from "../../../../src/common/misc/WhitelabelCustomizations.js"
+import { EntityClient } from "../../../../src/common/api/common/EntityClient.js"
+import { themes } from "../../../../src/common/gui/builtinThemes.js"
+import type { LoginController } from "../../../../src/common/api/main/LoginController.js"
+import { spy } from "@tutao/tutanota-test-utils"
+import { createTestEntity } from "../../TestUtils.js"
 
-o.spec("Simple Color Editor", function () {
+o.spec("SimpleColorEditor", function () {
 	let model: CustomColorsEditorViewModel
 	let themeController: ThemeController
 	let whitelabelConfig
@@ -17,11 +18,11 @@ o.spec("Simple Color Editor", function () {
 	let defaultTheme
 	// These customizations should always be set if no changes are made
 	const defaultCustomizations: ThemeCustomizations = downcast({
-		list_accent_fg: "#840010",
-		content_accent: "#840010",
-		content_button_selected: "#840010",
-		navigation_button_selected: "#840010",
-		header_button_selected: "#840010",
+		list_accent_fg: "#850122",
+		content_accent: "#850122",
+		content_button_selected: "#850122",
+		navigation_button_selected: "#850122",
+		header_button_selected: "#850122",
 		base: "light",
 	})
 	let entityClient: EntityClient
@@ -29,18 +30,18 @@ o.spec("Simple Color Editor", function () {
 	let isWhitelabelEnabled: boolean = false
 	o.beforeEach(function () {
 		isWhitelabelEnabled = false
-		themeController = downcast({
-			updateCustomTheme: o.spy(),
+		themeController = {
+			applyCustomizations: spy(),
 			getDefaultTheme: () => {
-				return themes["light"]
+				return themes()["light"]
 			},
-		})
-		whitelabelConfig = createWhitelabelConfig()
-		whitelabelDomainInfo = createDomainInfo()
+		} as Partial<ThemeController> as ThemeController
+		whitelabelConfig = createTestEntity(WhitelabelConfigTypeRef)
+		whitelabelDomainInfo = createTestEntity(DomainInfoTypeRef)
 		whitelabelDomainInfo.domain = "test.domain.com"
 		defaultTheme = themeController.getDefaultTheme()
 		entityClient = downcast({
-			update: o.spy(),
+			update: spy(),
 		})
 		loginController = downcast({
 			isWhitelabel: () => {
@@ -60,9 +61,9 @@ o.spec("Simple Color Editor", function () {
 				entityClient,
 				loginController,
 			)
-			o(model.accentColor).equals("#840010")
+			o(model.accentColor).equals("#850122")
 			o(model.baseThemeId).equals("light")
-			o(themeController.updateCustomTheme.callCount).equals(1)
+			o(themeController.applyCustomizations.callCount).equals(1)
 		})
 		o("open Editor with custom theme, all customizations should be applied", async function () {
 			const customizations: ThemeCustomizations = downcast({
@@ -226,8 +227,8 @@ o.spec("Simple Color Editor", function () {
 			)
 			await model.resetActiveClientTheme()
 			// Should equal 2 since we call it once upon opening and then once when closing
-			o(themeController.updateCustomTheme.callCount).equals(2)
-			o(themeController.updateCustomTheme.args[0]).deepEquals(
+			o(themeController.applyCustomizations.callCount).equals(2)
+			o(themeController.applyCustomizations.args[0]).deepEquals(
 				Object.assign({}, defaultTheme, {
 					base: null,
 				}),
@@ -278,7 +279,7 @@ o.spec("Simple Color Editor", function () {
 			)
 			await model.save()
 			// Should equal 1 here since we call updateCustomTheme once when initializing the viewModel, and then not anymore when saving
-			o(themeController.updateCustomTheme.callCount).equals(1)
+			o(themeController.applyCustomizations.callCount).equals(1)
 		})
 	})
 	o.spec("changeAccentColor", function () {
@@ -302,7 +303,7 @@ o.spec("Simple Color Editor", function () {
 				loginController,
 			)
 			model.changeAccentColor("#ff00f2")
-			o(themeController.updateCustomTheme.callCount).equals(1)
+			o(themeController.applyCustomizations.callCount).equals(1)
 			await model.save()
 			o(entityClient.update.callCount).equals(1)
 			o(JSON.parse(entityClient.update.args[0].jsonTheme)).deepEquals(
@@ -310,7 +311,7 @@ o.spec("Simple Color Editor", function () {
 					base: "light",
 				}),
 			)
-			o(themeController.updateCustomTheme.callCount).equals(2) // called twice since we a) set the preview and b) return to previous theme
+			o(themeController.applyCustomizations.callCount).equals(2) // called twice since we a) set the preview and b) return to previous theme
 		})
 	})
 	o.spec("changeBaseTheme", function () {

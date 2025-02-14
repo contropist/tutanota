@@ -1,23 +1,24 @@
-import o from "ospec"
+import o from "@tutao/otest"
 import n from "../../nodemocker.js"
-import { getDesktopIntegratorForPlatform } from "../../../../src/desktop/integration/DesktopIntegrator.js"
+import { getDesktopIntegratorForPlatform } from "../../../../src/common/desktop/integration/DesktopIntegrator.js"
 import { downcast } from "@tutao/tutanota-utils"
-import type { WindowManager } from "../../../../src/desktop/DesktopWindowManager.js"
-import { lang } from "../../../../src/misc/LanguageViewModel.js"
-import en from "../../../../src/translations/en.js"
-import { DesktopIntegratorLinux } from "../../../../src/desktop/integration/DesktopIntegratorLinux.js"
-import { DesktopIntegratorDarwin } from "../../../../src/desktop/integration/DesktopIntegratorDarwin.js"
-import { DesktopIntegratorWin32 } from "../../../../src/desktop/integration/DesktopIntegratorWin32.js"
+import type { WindowManager } from "../../../../src/common/desktop/DesktopWindowManager.js"
+import { lang } from "../../../../src/common/misc/LanguageViewModel.js"
+import en from "../../../../src/mail-app/translations/en.js"
+import { DesktopIntegratorLinux } from "../../../../src/common/desktop/integration/DesktopIntegratorLinux.js"
+import { DesktopIntegratorDarwin } from "../../../../src/common/desktop/integration/DesktopIntegratorDarwin.js"
+import { DesktopIntegratorWin32 } from "../../../../src/common/desktop/integration/DesktopIntegratorWin32.js"
+import { spy } from "@tutao/tutanota-test-utils"
 
 const desktopEntry = `[Desktop Entry]
-Name=Tutanota Desktop
-Comment=The desktop client for Tutanota, the secure e-mail service.
+Name=Tuta Mail
+Comment=The desktop client for Tuta Mail, the secure e-mail service.
 GenericName=Mail Client
 Keywords=Email;E-mail
 Exec="/appimage/path/file.appImage" %U
 Terminal=false
 Type=Application
-Icon=appName.png
+Icon=appName
 StartupWMClass=appName
 MimeType=x-scheme-handler/mailto;
 Categories=Network;
@@ -243,7 +244,7 @@ o.spec("DesktopIntegrator Test", () => {
 			const integrator = new DesktopIntegratorDarwin(electronMock)
 
 			const wmMock = downcast<WindowManager>({
-				newWindow: o.spy(() => {}),
+				newWindow: spy(() => {}),
 			})
 			await integrator.runIntegration(wmMock)
 			o(electronMock.Menu.buildFromTemplate.callCount).equals(1)
@@ -545,7 +546,7 @@ o.spec("DesktopIntegrator Test", () => {
 		})
 	})
 
-	o.spec("Windows", async function () {
+	o.spec("Windows", function () {
 		o.beforeEach(function () {
 			n.setPlatform("win32")
 		})
